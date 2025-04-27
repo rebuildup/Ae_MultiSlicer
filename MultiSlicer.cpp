@@ -44,6 +44,18 @@ typedef struct {
     double* positions;   // 分割位置を保存する配列（0〜1の値）
 } SliceInfo;
 
+// シーケンスデータ構造体 - マルチフレームレンダリングのサポート用
+// Sequence data structure - for multi-frame rendering support
+typedef struct {
+    A_long reserved;  // 将来の拡張のための予約フィールド
+} MultiSlicerSequenceData;
+
+// プリレンダリングデータ - マルチフレームレンダリングのサポート用
+// Pre-rendering data - for multi-frame rendering support
+typedef struct {
+    SliceInfo sliceInfo;
+} MultiSlicerPreRenderData;
+
 // 擬似乱数生成関数（より複雑な要素を加えて、異なるシードが異なる結果を作る）
 // Pseudo-random number generation function (with more complexity to ensure different seeds produce different results)
 static double generateRandom(A_long seed, A_long index) {
@@ -319,7 +331,14 @@ GlobalSetup(
         STAGE_VERSION,
         BUILD_VERSION);
 
-    out_data->out_flags = PF_OutFlag_DEEP_COLOR_AWARE;	// just 16bpc, not 32bpc
+    // マルチフレームレンダリングのサポートフラグを追加 (PiPLファイルと一致させる)
+    // Add support flags for multi-frame rendering (matching the PiPL file)
+    out_data->out_flags = PF_OutFlag_DEEP_COLOR_AWARE |
+        PF_OutFlag_WIDE_TIME_INPUT;   // 0x2000002
+
+    // マルチフレームレンダリングをサポートすることを宣言 (PiPLファイルと一致させる)
+    // Declare support for multi-frame rendering (matching the PiPL file)
+    out_data->out_flags2 = PF_OutFlag2_SUPPORTS_SMART_RENDER;  // 0x400
 
     return PF_Err_NONE;
 }
@@ -444,6 +463,277 @@ UserChangedParam(
                 ERR(PF_CHECKIN_PARAM(in_data, 0));
             }
         }
+    }
+
+    return err;
+}
+
+// 動的フラグのクエリ関数 - マルチフレームレンダリングに必要
+// Query Dynamic Flags function - required for multi-frame rendering
+static PF_Err
+QueryDynamicFlags(
+    PF_InData* in_data,
+    PF_OutData* out_data,
+    PF_ParamDef* params[],
+    void* extra)
+{
+    // マルチフレームレンダリングをサポートするためのフラグを設定 (PiPLと一致させる)
+    // Set flags to enable multi-frame rendering (matching PiPL)
+    out_data->out_flags2 |= PF_OutFlag2_SUPPORTS_SMART_RENDER;  // 0x400
+
+    return PF_Err_NONE;
+}
+
+// シーケンスデータ設定関数
+// Sequence Setup function for Smart Rendering
+static PF_Err
+SequenceSetup(
+    PF_InData* in_data,
+    PF_OutData* out_data,
+    PF_ParamDef* params[],
+    PF_LayerDef* output)
+{
+    PF_Err err = PF_Err_NONE;
+
+    // シーケンスデータ用のメモリを確保
+    // Allocate memory for sequence data
+    PF_Handle handle = PF_NEW_HANDLE(sizeof(MultiSlicerSequenceData));
+    if (!handle) {
+        return PF_Err_OUT_OF_MEMORY;
+    }
+
+    // ハンドルをロックしてデータを初期化
+    // Lock handle and initialize data
+    MultiSlicerSequenceData* sequence_data = (MultiSlicerSequenceData*)PF_LOCK_HANDLE(handle);
+    if (!sequence_data) {
+        PF_DISPOSE_HANDLE(handle);
+        return PF_Err_OUT_OF_MEMORY;
+    }
+
+    // シーケンスデータを初期化
+    // Initialize sequence data
+    sequence_data->reserved = 0;
+
+    // ハンドルをアンロック
+    // Unlock handle
+    PF_UNLOCK_HANDLE(handle);
+
+    // シーケンスデータを出力に設定
+    // Set sequence data to output
+    out_data->sequence_data = handle;
+
+    return err;
+}
+
+// シーケンスデータのフラット化関数（永続化のため）
+// Sequence Flatten function for data persistence
+static PF_Err
+SequenceFlatten(
+    PF_InData* in_data,
+    PF_OutData* out_data,
+    PF_ParamDef* params[],
+    PF_LayerDef* output)
+{
+    // この実装ではシーケンスデータは単純なので特に何もしない
+    // In this implementation, sequence data is simple, so do nothing special
+    return PF_Err_NONE;
+}
+
+// シーケンスの再設定関数
+// Sequence Resetup function
+static PF_Err
+SequenceResetup(
+    PF_InData* in_data,
+    PF_OutData* out_data,
+    PF_ParamDef* params[],
+    PF_LayerDef* output)
+{
+    // この実装ではシーケンスデータは単純なので特に何もしない
+    // In this implementation, sequence data is simple, so do nothing special
+    return PF_Err_NONE;
+}
+
+// シーケンスデータの解放関数
+// Sequence Data Dispose function
+static PF_Err
+SequenceSetdown(
+    PF_InData* in_data,
+    PF_OutData* out_data,
+    PF_ParamDef* params[],
+    PF_LayerDef* output)
+{
+    if (in_data->sequence_data) {
+        PF_DISPOSE_HANDLE(in_data->sequence_data);
+    }
+    return PF_Err_NONE;
+}
+
+// スマートレンダリングのための前処理関数
+// Pre-render function for Smart Rendering
+static PF_Err
+SmartPreRender(
+    PF_InData* in_data,
+    PF_OutData* out_data,
+    PF_PreRenderExtra* extra)
+{
+    PF_Err err = PF_Err_NONE;
+    PF_RenderRequest req = extra->input->output_request;
+    PF_CheckoutResult checkout_result;
+
+    // 入力レイヤーをチェックアウト
+    // Checkout input layer
+    ERR(extra->cb->checkout_layer(
+        in_data->effect_ref,
+        SKELETON_INPUT,
+        SKELETON_INPUT,
+        &req,
+        in_data->current_time,
+        in_data->time_step,
+        in_data->time_scale,
+        &checkout_result));
+
+    if (!err) {
+        // プリレンダーデータの確保
+        // Allocate pre-render data
+        PF_Handle handle = PF_NEW_HANDLE(sizeof(MultiSlicerPreRenderData));
+        if (!handle) {
+            return PF_Err_OUT_OF_MEMORY;
+        }
+
+        // ハンドルをロックしてデータを初期化
+        // Lock handle and initialize data
+        MultiSlicerPreRenderData* pre_render_data = (MultiSlicerPreRenderData*)PF_LOCK_HANDLE(handle);
+        if (!pre_render_data) {
+            PF_DISPOSE_HANDLE(handle);
+            return PF_Err_OUT_OF_MEMORY;
+        }
+
+        // パラメータを取得
+        // Get parameters
+        PF_ParamDef param_def;
+        AEFX_CLR_STRUCT(param_def);
+        ERR(PF_CHECKOUT_PARAM(in_data, SLICE_DIV_COUNT, in_data->current_time, in_data->time_step, in_data->time_scale, &param_def));
+        if (!err) {
+            pre_render_data->sliceInfo.divCount = param_def.u.sd.value;
+            ERR(PF_CHECKIN_PARAM(in_data, &param_def));
+        }
+
+        AEFX_CLR_STRUCT(param_def);
+        ERR(PF_CHECKOUT_PARAM(in_data, SLICE_SEED, in_data->current_time, in_data->time_step, in_data->time_scale, &param_def));
+        if (!err) {
+            pre_render_data->sliceInfo.seed = param_def.u.sd.value;
+            ERR(PF_CHECKIN_PARAM(in_data, &param_def));
+        }
+
+        // レイヤーのサイズを取得
+        // Get layer dimensions from the result rect
+        pre_render_data->sliceInfo.width = checkout_result.max_result_rect.right - checkout_result.max_result_rect.left;
+        pre_render_data->sliceInfo.height = checkout_result.max_result_rect.bottom - checkout_result.max_result_rect.top;
+        pre_render_data->sliceInfo.positions = NULL;
+        pre_render_data->sliceInfo.topEdge = 0;
+        pre_render_data->sliceInfo.bottomEdge = 0;
+
+        // ハンドルをアンロック
+        // Unlock handle
+        PF_UNLOCK_HANDLE(handle);
+
+        // プリレンダーデータを設定
+        // Set pre-render data
+        extra->output->pre_render_data = handle;
+
+        // 出力領域を設定
+        // Set output area
+        extra->output->result_rect = checkout_result.result_rect;
+        extra->output->max_result_rect = checkout_result.max_result_rect;
+    }
+
+    return err;
+}
+
+// スマートレンダリング処理関数
+// Smart Render function
+static PF_Err
+SmartRender(
+    PF_InData* in_data,
+    PF_OutData* out_data,
+    PF_SmartRenderExtra* extra)
+{
+    PF_Err err = PF_Err_NONE;
+    AEGP_SuiteHandler suites(in_data->pica_basicP);
+    PF_EffectWorld* input_worldP = NULL;
+    PF_EffectWorld* output_worldP = NULL;
+
+    // 入力レイヤーのチェックアウト
+    // Checkout input layer
+    ERR(extra->cb->checkout_layer_pixels(in_data->effect_ref, SKELETON_INPUT, &input_worldP));
+
+    if (!err && input_worldP) {
+        // 出力バッファのチェックアウト
+        // Checkout output buffer
+        ERR(extra->cb->checkout_output(in_data->effect_ref, &output_worldP));
+
+        if (!err && output_worldP) {
+            // プリレンダーデータの取得
+            // Get pre-render data
+            MultiSlicerPreRenderData* pre_render_data = reinterpret_cast<MultiSlicerPreRenderData*>(
+                PF_LOCK_HANDLE(extra->input->pre_render_data));
+
+            if (pre_render_data) {
+                // レイヤーの透明でない領域のエッジを検出
+                // Detect edges of non-transparent areas in the layer
+                ERR(detectLayerEdges(input_worldP, &pre_render_data->sliceInfo));
+
+                // 分割位置を計算
+                // Calculate slice positions
+                if (!err) {
+                    ERR(calculateSlicePositions(&pre_render_data->sliceInfo));
+                }
+
+                // レンダリング
+                // Rendering
+                if (!err) {
+                    A_long linesL = output_worldP->height;
+
+                    if (PF_WORLD_IS_DEEP(output_worldP)) {
+                        ERR(suites.Iterate16Suite2()->iterate(
+                            in_data,
+                            0,                              // progress base
+                            linesL,                         // progress final
+                            input_worldP,                   // src 
+                            NULL,                           // area - null for all pixels
+                            (void*)&pre_render_data->sliceInfo, // refcon - custom data pointer
+                            SliceFunc16,                    // pixel function pointer
+                            output_worldP));
+                    }
+                    else {
+                        ERR(suites.Iterate8Suite2()->iterate(
+                            in_data,
+                            0,                              // progress base
+                            linesL,                         // progress final
+                            input_worldP,                   // src 
+                            NULL,                           // area - null for all pixels
+                            (void*)&pre_render_data->sliceInfo, // refcon - custom data pointer
+                            SliceFunc8,                     // pixel function pointer
+                            output_worldP));
+                    }
+                }
+
+                // メモリ解放
+                // Free memory
+                if (pre_render_data->sliceInfo.positions) {
+                    free(pre_render_data->sliceInfo.positions);
+                    pre_render_data->sliceInfo.positions = NULL;
+                }
+
+                PF_UNLOCK_HANDLE(extra->input->pre_render_data);
+            }
+        }
+    }
+
+    // レイヤーのチェックイン
+    // Check in layers
+    if (input_worldP) {
+        ERR(extra->cb->checkin_layer_pixels(in_data->effect_ref, SKELETON_INPUT));
     }
 
     return err;
@@ -594,6 +884,36 @@ EffectMain(
                 params,
                 output,
                 (const PF_UserChangedParamExtra*)extra);
+            break;
+
+            // マルチフレームレンダリング関連のコマンド
+            // Multi-frame rendering related commands
+        case PF_Cmd_QUERY_DYNAMIC_FLAGS:
+            err = QueryDynamicFlags(in_data, out_data, params, extra);
+            break;
+
+        case PF_Cmd_SEQUENCE_SETUP:
+            err = SequenceSetup(in_data, out_data, params, output);
+            break;
+
+        case PF_Cmd_SEQUENCE_RESETUP:
+            err = SequenceResetup(in_data, out_data, params, output);
+            break;
+
+        case PF_Cmd_SEQUENCE_FLATTEN:
+            err = SequenceFlatten(in_data, out_data, params, output);
+            break;
+
+        case PF_Cmd_SEQUENCE_SETDOWN:
+            err = SequenceSetdown(in_data, out_data, params, output);
+            break;
+
+        case PF_Cmd_SMART_PRE_RENDER:
+            err = SmartPreRender(in_data, out_data, (PF_PreRenderExtra*)extra);
+            break;
+
+        case PF_Cmd_SMART_RENDER:
+            err = SmartRender(in_data, out_data, (PF_SmartRenderExtra*)extra);
             break;
         }
     }
