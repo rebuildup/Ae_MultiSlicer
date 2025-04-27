@@ -70,21 +70,41 @@ typedef short int			int16;
 
 /* Parameter defaults */
 
-#define	SKELETON_GAIN_MIN		0
-#define	SKELETON_GAIN_MAX		100
-#define	SKELETON_GAIN_DFLT		10
+#define SLICE_SHIFT_MIN       -10000
+#define SLICE_SHIFT_MAX       10000
+#define SLICE_SHIFT_DFLT      0
 
-enum {
-	SKELETON_INPUT = 0,
-	SKELETON_GAIN,
-	SKELETON_COLOR,
-	SKELETON_NUM_PARAMS
-};
+#define SLICE_ANGLE_DFLT      0
 
-enum {
-	GAIN_DISK_ID = 1,
-	COLOR_DISK_ID,
-};
+#define SLICE_WIDTH_MIN       0
+#define SLICE_WIDTH_MAX       100
+#define SLICE_WIDTH_DFLT      100
+
+#define SLICE_DIV_COUNT_MIN   1
+#define SLICE_DIV_COUNT_MAX   3000
+#define SLICE_DIV_COUNT_DFLT  10
+
+#define SLICE_SEED_MIN        0
+#define SLICE_SEED_MAX        10000
+#define SLICE_SEED_DFLT       0
+
+	enum {
+		SKELETON_INPUT = 0,
+		SLICE_SHIFT,
+		SLICE_ANGLE,
+		SLICE_WIDTH,
+		SLICE_DIV_COUNT,
+		SLICE_SEED,
+		SKELETON_NUM_PARAMS
+	};
+
+	enum {
+		SHIFT_DISK_ID = 1,
+		ANGLE_DISK_ID,
+		WIDTH_DISK_ID,
+		DIV_COUNT_DISK_ID,
+		SEED_DISK_ID
+	};
 
 typedef struct GainInfo{
 	PF_FpLong	gainF;
