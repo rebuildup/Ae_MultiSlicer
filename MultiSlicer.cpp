@@ -19,26 +19,16 @@
 /*                                                                 */
 /*******************************************************************/
 
-/*	Skeleton.cpp
+/*	MultiSlicer.cpp
 
-	This is a compiling husk of a project. Fill it in with interesting
-	pixel processing code.
+	This plugin implements functionality similar to Aviutl's MultiSlicer_P.
+	It slices an image into multiple parts with customizable properties.
 
 	Revision History
 
 	Version		Change													Engineer	Date
 	=======		======													========	======
-	1.0			(seemed like a good idea at the time)					bbb			6/1/2002
-
-	1.0			Okay, I'm leaving the version at 1.0,					bbb			2/15/2006
-				for obvious reasons; you're going to
-				copy these files directly! This is the
-				first XCode version, though.
-
-	1.0			Let's simplify this barebones sample					zal			11/11/2010
-
-	1.0			Added new entry point									zal			9/18/2017
-	1.1			Added 'Support URL' to PiPL and entry point				cjr			3/31/2023
+	1.0			Initial implementation									yourname	04/28/2025
 
 */
 
@@ -75,7 +65,9 @@ GlobalSetup(
 		STAGE_VERSION,
 		BUILD_VERSION);
 
-	out_data->out_flags = PF_OutFlag_DEEP_COLOR_AWARE;	// just 16bpc, not 32bpc
+	out_data->out_flags = PF_OutFlag_DEEP_COLOR_AWARE;	// Support 16bpc
+	out_data->out_flags |= PF_OutFlag_PIX_INDEPENDENT;   // Support multiprocessing
+	out_data->out_flags |= PF_OutFlag_SEND_UPDATE_PARAMS_UI;
 
 	return PF_Err_NONE;
 }
@@ -92,81 +84,335 @@ ParamsSetup(
 
 	AEFX_CLR_STRUCT(def);
 
-	PF_ADD_FLOAT_SLIDERX(STR(StrID_Gain_Param_Name),
-		SKELETON_GAIN_MIN,
-		SKELETON_GAIN_MAX,
-		SKELETON_GAIN_MIN,
-		SKELETON_GAIN_MAX,
-		SKELETON_GAIN_DFLT,
+	// Angle parameter - determines the direction of slicing
+	PF_ADD_ANGLE(STR(StrID_Angle_Param_Name),
+		0,
+		ANGLE_DISK_ID);
+
+	// Progress parameter - controls animation progress
+	AEFX_CLR_STRUCT(def);
+	PF_ADD_FLOAT_SLIDERX(STR(StrID_Progress_Param_Name),
+		MULTISLICER_PROGRESS_MIN,
+		MULTISLICER_PROGRESS_MAX,
+		MULTISLICER_PROGRESS_MIN,
+		MULTISLICER_PROGRESS_MAX,
+		MULTISLICER_PROGRESS_DFLT,
 		PF_Precision_HUNDREDTHS,
 		0,
 		0,
-		GAIN_DISK_ID);
+		PROGRESS_DISK_ID);
 
+	// Number of slices parameter
 	AEFX_CLR_STRUCT(def);
+	PF_ADD_SLIDER(STR(StrID_Slices_Param_Name),
+		MULTISLICER_SLICES_MIN,
+		MULTISLICER_SLICES_MAX,
+		MULTISLICER_SLICES_MIN,
+		MULTISLICER_SLICES_MAX,
+		MULTISLICER_SLICES_DFLT,
+		SLICES_DISK_ID);
 
-	PF_ADD_COLOR(STR(StrID_Color_Param_Name),
-		PF_HALF_CHAN8,
-		PF_MAX_CHAN8,
-		PF_MAX_CHAN8,
-		COLOR_DISK_ID);
+	// Minimum slice width parameter
+	AEFX_CLR_STRUCT(def);
+	PF_ADD_FLOAT_SLIDERX(STR(StrID_MinWidth_Param_Name),
+		MULTISLICER_WIDTH_MIN,
+		MULTISLICER_WIDTH_MAX,
+		MULTISLICER_WIDTH_MIN,
+		MULTISLICER_WIDTH_MAX,
+		MULTISLICER_WIDTH_MIN,
+		PF_Precision_HUNDREDTHS,
+		0,
+		0,
+		MIN_WIDTH_DISK_ID);
 
-	out_data->num_params = SKELETON_NUM_PARAMS;
+	// Maximum slice width parameter
+	AEFX_CLR_STRUCT(def);
+	PF_ADD_FLOAT_SLIDERX(STR(StrID_MaxWidth_Param_Name),
+		MULTISLICER_WIDTH_MIN,
+		MULTISLICER_WIDTH_MAX,
+		MULTISLICER_WIDTH_MIN,
+		MULTISLICER_WIDTH_MAX,
+		MULTISLICER_WIDTH_DFLT,
+		PF_Precision_HUNDREDTHS,
+		0,
+		0,
+		MAX_WIDTH_DISK_ID);
+
+	// Seed for randomness
+	AEFX_CLR_STRUCT(def);
+	PF_ADD_SLIDER(STR(StrID_Seed_Param_Name),
+		MULTISLICER_SEED_MIN,
+		MULTISLICER_SEED_MAX,
+		MULTISLICER_SEED_MIN,
+		MULTISLICER_SEED_MAX,
+		MULTISLICER_SEED_DFLT,
+		SEED_DISK_ID);
+
+	// Fade parameter
+	AEFX_CLR_STRUCT(def);
+	PF_ADD_FLOAT_SLIDERX(STR(StrID_Fade_Param_Name),
+		MULTISLICER_FADE_MIN,
+		MULTISLICER_FADE_MAX,
+		MULTISLICER_FADE_MIN,
+		MULTISLICER_FADE_MAX,
+		MULTISLICER_FADE_DFLT,
+		PF_Precision_HUNDREDTHS,
+		0,
+		0,
+		FADE_DISK_ID);
+
+	// Fade width parameter
+	AEFX_CLR_STRUCT(def);
+	PF_ADD_FLOAT_SLIDERX(STR(StrID_FadeWidth_Param_Name),
+		MULTISLICER_FADE_WIDTH_MIN,
+		MULTISLICER_FADE_WIDTH_MAX,
+		MULTISLICER_FADE_WIDTH_MIN,
+		MULTISLICER_FADE_WIDTH_MAX,
+		MULTISLICER_FADE_WIDTH_DFLT,
+		PF_Precision_HUNDREDTHS,
+		0,
+		0,
+		FADE_WIDTH_DISK_ID);
+
+	// Virtual buffer checkbox
+	AEFX_CLR_STRUCT(def);
+	PF_ADD_CHECKBOX(STR(StrID_VirtualBuffer_Param_Name),
+		"",
+		FALSE,
+		0,
+		VIRTUAL_BUFFER_DISK_ID);
+
+	out_data->num_params = MULTISLICER_NUM_PARAMS;
 
 	return err;
 }
 
-static PF_Err
-MySimpleGainFunc16(
-	void* refcon,
-	A_long		xL,
-	A_long		yL,
-	PF_Pixel16* inP,
-	PF_Pixel16* outP)
+// Calculate random value for consistent slice patterns
+static float GetRandomValue(A_long seed, A_long index) {
+	// Simple hash function to generate pseudo-random value
+	A_long hash = ((seed * 1099087) + (index * 2654435761)) & 0x7FFFFFFF;
+	return (float)hash / (float)0x7FFFFFFF;
+}
+
+// Rotate a point around another point
+static void RotatePoint(
+	float centerX, float centerY,
+	float& x, float& y,
+	float angleCos, float angleSin)
 {
-	PF_Err		err = PF_Err_NONE;
+	float dx = x - centerX;
+	float dy = y - centerY;
 
-	GainInfo* giP = reinterpret_cast<GainInfo*>(refcon);
-	PF_FpLong	tempF = 0;
+	// Rotate the point
+	float newX = dx * angleCos - dy * angleSin + centerX;
+	float newY = dx * angleSin + dy * angleCos + centerY;
 
-	if (giP) {
-		tempF = giP->gainF * PF_MAX_CHAN16 / 100.0;
-		if (tempF > PF_MAX_CHAN16) {
-			tempF = PF_MAX_CHAN16;
-		};
+	x = newX;
+	y = newY;
+}
 
-		outP->alpha = inP->alpha;
-		outP->red = MIN((inP->red + (A_u_char)tempF), PF_MAX_CHAN16);
-		outP->green = MIN((inP->green + (A_u_char)tempF), PF_MAX_CHAN16);
-		outP->blue = MIN((inP->blue + (A_u_char)tempF), PF_MAX_CHAN16);
+// Function to process a single slice of the image
+// Composite function for virtual buffer
+static PF_Err CompositePixel(
+	void* refcon,
+	A_long x,
+	A_long y,
+	PF_Pixel* src,
+	PF_Pixel* dst)
+{
+	PF_Err err = PF_Err_NONE;
+
+	// Simple alpha blending
+	if (src->alpha == 0) {
+		// Source is fully transparent, keep destination
+		return err;
+	}
+	else if (src->alpha == PF_MAX_CHAN8) {
+		// Source is fully opaque, replace destination
+		*dst = *src;
+	}
+	else {
+		// Blend based on alpha
+		float srcAlpha = (float)src->alpha / PF_MAX_CHAN8;
+		float dstAlpha = 1.0f - srcAlpha;
+
+		dst->red = (A_u_char)(src->red * srcAlpha + dst->red * dstAlpha);
+		dst->green = (A_u_char)(src->green * srcAlpha + dst->green * dstAlpha);
+		dst->blue = (A_u_char)(src->blue * srcAlpha + dst->blue * dstAlpha);
+		dst->alpha = MAX(src->alpha, dst->alpha);
 	}
 
 	return err;
 }
 
-static PF_Err
-MySimpleGainFunc8(
+static PF_Err ProcessSlice(
 	void* refcon,
-	A_long		xL,
-	A_long		yL,
-	PF_Pixel8* inP,
-	PF_Pixel8* outP)
+	A_long x,
+	A_long y,
+	PF_Pixel* in,
+	PF_Pixel* out)
 {
-	PF_Err		err = PF_Err_NONE;
+	PF_Err err = PF_Err_NONE;
+	SliceInfo* sliceInfoP = (SliceInfo*)refcon;
 
-	GainInfo* giP = reinterpret_cast<GainInfo*>(refcon);
-	PF_FpLong	tempF = 0;
+	if (!sliceInfoP) {
+		return err;
+	}
 
-	if (giP) {
-		tempF = giP->gainF * PF_MAX_CHAN8 / 100.0;
-		if (tempF > PF_MAX_CHAN8) {
-			tempF = PF_MAX_CHAN8;
-		};
+	// Point in the original coordinate system
+	float rotatedX = x;
+	float rotatedY = y;
 
-		outP->alpha = inP->alpha;
-		outP->red = MIN((inP->red + (A_u_char)tempF), PF_MAX_CHAN8);
-		outP->green = MIN((inP->green + (A_u_char)tempF), PF_MAX_CHAN8);
-		outP->blue = MIN((inP->blue + (A_u_char)tempF), PF_MAX_CHAN8);
+	// Rotate point to slice space
+	RotatePoint(sliceInfoP->centerX, sliceInfoP->centerY,
+		rotatedX, rotatedY,
+		sliceInfoP->angleCos, -sliceInfoP->angleSin);
+
+	// Calculate distance along the slice direction
+	float distAlongAngle = rotatedX - sliceInfoP->sliceStart;
+
+	// Check if this pixel is in the current slice
+	if (distAlongAngle >= 0 && distAlongAngle <= sliceInfoP->sliceWidth) {
+		// Calculate offset based on progress
+		float offset = sliceInfoP->sliceOffset * sliceInfoP->progress;
+
+		// Calculate source coordinates
+		float srcX = x - offset * sliceInfoP->angleSin;
+		float srcY = y + offset * sliceInfoP->angleCos;
+
+		// Bounds checking
+		if (srcX >= 0 && srcX < sliceInfoP->width &&
+			srcY >= 0 && srcY < sliceInfoP->height) {
+
+			// Calculate and apply fade if needed
+			float fade = 1.0f;
+			if (sliceInfoP->fade > 0) {
+				// Calculate fade based on distance from center
+				float distFromCenter = ABS(sliceInfoP->centerX - rotatedX);
+				float normalizedDist = distFromCenter / (sliceInfoP->width * 0.5f);
+				float fadeAmount = normalizedDist * sliceInfoP->fade;
+				fade = CLAMP(1.0f - fadeAmount, 0.0f, 1.0f);
+
+				// Apply fade width
+				if (sliceInfoP->fadeWidth > 0) {
+					// Get distance from slice edge
+					float edgeDist = MIN(distAlongAngle, sliceInfoP->sliceWidth - distAlongAngle);
+					float edgeRatio = MIN(edgeDist / (sliceInfoP->fadeWidth * sliceInfoP->sliceWidth), 1.0f);
+					fade *= edgeRatio;
+				}
+			}
+
+			// Get the source pixel
+			A_long srcIndex = ((A_long)srcY * sliceInfoP->rowbytes) + ((A_long)srcX * sizeof(PF_Pixel));
+			PF_Pixel* srcPix = (PF_Pixel*)((char*)sliceInfoP->srcData + srcIndex);
+
+			// Apply the fade to alpha and copy the pixel
+			out->alpha = (A_u_char)(srcPix->alpha * fade);
+			out->red = srcPix->red;
+			out->green = srcPix->green;
+			out->blue = srcPix->blue;
+		}
+		else {
+			// Out of bounds, make transparent
+			out->alpha = 0;
+			out->red = 0;
+			out->green = 0;
+			out->blue = 0;
+		}
+	}
+	else {
+		// Not in this slice, make transparent
+		out->alpha = 0;
+		out->red = 0;
+		out->green = 0;
+		out->blue = 0;
+	}
+
+	return err;
+}
+
+// Function to handle 16-bit pixels
+static PF_Err ProcessSlice16(
+	void* refcon,
+	A_long x,
+	A_long y,
+	PF_Pixel16* in,
+	PF_Pixel16* out)
+{
+	PF_Err err = PF_Err_NONE;
+	SliceInfo* sliceInfoP = (SliceInfo*)refcon;
+
+	if (!sliceInfoP) {
+		return err;
+	}
+
+	// Point in the original coordinate system
+	float rotatedX = x;
+	float rotatedY = y;
+
+	// Rotate point to slice space
+	RotatePoint(sliceInfoP->centerX, sliceInfoP->centerY,
+		rotatedX, rotatedY,
+		sliceInfoP->angleCos, -sliceInfoP->angleSin);
+
+	// Calculate distance along the slice direction
+	float distAlongAngle = rotatedX - sliceInfoP->sliceStart;
+
+	// Check if this pixel is in the current slice
+	if (distAlongAngle >= 0 && distAlongAngle <= sliceInfoP->sliceWidth) {
+		// Calculate offset based on progress
+		float offset = sliceInfoP->sliceOffset * sliceInfoP->progress;
+
+		// Calculate source coordinates
+		float srcX = x - offset * sliceInfoP->angleSin;
+		float srcY = y + offset * sliceInfoP->angleCos;
+
+		// Bounds checking
+		if (srcX >= 0 && srcX < sliceInfoP->width &&
+			srcY >= 0 && srcY < sliceInfoP->height) {
+
+			// Calculate and apply fade if needed
+			float fade = 1.0f;
+			if (sliceInfoP->fade > 0) {
+				// Calculate fade based on distance from center
+				float distFromCenter = ABS(sliceInfoP->centerX - rotatedX);
+				float normalizedDist = distFromCenter / (sliceInfoP->width * 0.5f);
+				float fadeAmount = normalizedDist * sliceInfoP->fade;
+				fade = CLAMP(1.0f - fadeAmount, 0.0f, 1.0f);
+
+				// Apply fade width
+				if (sliceInfoP->fadeWidth > 0) {
+					// Get distance from slice edge
+					float edgeDist = MIN(distAlongAngle, sliceInfoP->sliceWidth - distAlongAngle);
+					float edgeRatio = MIN(edgeDist / (sliceInfoP->fadeWidth * sliceInfoP->sliceWidth), 1.0f);
+					fade *= edgeRatio;
+				}
+			}
+
+			// Get the source pixel
+			A_long srcIndex = ((A_long)srcY * sliceInfoP->rowbytes) + ((A_long)srcX * sizeof(PF_Pixel16));
+			PF_Pixel16* srcPix = (PF_Pixel16*)((char*)sliceInfoP->srcData + srcIndex);
+
+			// Apply the fade to alpha and copy the pixel
+			out->alpha = (A_u_short)(srcPix->alpha * fade);
+			out->red = srcPix->red;
+			out->green = srcPix->green;
+			out->blue = srcPix->blue;
+		}
+		else {
+			// Out of bounds, make transparent
+			out->alpha = 0;
+			out->red = 0;
+			out->green = 0;
+			out->blue = 0;
+		}
+	}
+	else {
+		// Not in this slice, make transparent
+		out->alpha = 0;
+		out->red = 0;
+		out->green = 0;
+		out->blue = 0;
 	}
 
 	return err;
@@ -181,34 +427,162 @@ Render(
 {
 	PF_Err				err = PF_Err_NONE;
 	AEGP_SuiteHandler	suites(in_data->pica_basicP);
+	PF_EffectWorld* inputP = &params[MULTISLICER_INPUT]->u.ld;
+	PF_EffectWorld* outputP = output;
 
-	/*	Put interesting code here. */
-	GainInfo			giP;
-	AEFX_CLR_STRUCT(giP);
-	A_long				linesL = 0;
+	// Extract parameters
+	A_long angle = params[MULTISLICER_ANGLE]->u.ad.value;
+	float progress = params[MULTISLICER_PROGRESS]->u.fs_d.value / 100.0f;
+	A_long numSlices = params[MULTISLICER_SLICES]->u.sd.value;
+	float minWidth = params[MULTISLICER_MIN_WIDTH]->u.fs_d.value;
+	float maxWidth = params[MULTISLICER_MAX_WIDTH]->u.fs_d.value;
+	A_long seed = params[MULTISLICER_SEED]->u.sd.value;
+	float fade = params[MULTISLICER_FADE]->u.fs_d.value / 100.0f;
+	float fadeWidth = params[MULTISLICER_FADE_WIDTH]->u.fs_d.value / 100.0f;
+	A_long useVirtualBuffer = params[MULTISLICER_VIRTUAL_BUFFER]->u.bd.value;
 
-	linesL = output->extent_hint.bottom - output->extent_hint.top;
-	giP.gainF = params[SKELETON_GAIN]->u.fs_d.value;
+	// Get image dimensions
+	A_long width = inputP->width;
+	A_long height = inputP->height;
+	A_long centerX = width / 2;
+	A_long centerY = height / 2;
 
-	if (PF_WORLD_IS_DEEP(output)) {
-		ERR(suites.Iterate16Suite2()->iterate(in_data,
-			0,								// progress base
-			linesL,							// progress final
-			&params[SKELETON_INPUT]->u.ld,	// src 
-			NULL,							// area - null for all pixels
-			(void*)&giP,					// refcon - your custom data pointer
-			MySimpleGainFunc16,				// pixel function pointer
-			output));
+	// Calculate angle in radians
+	float angleRad = (float)angle * PF_RAD_PER_DEGREE;
+	float angleCos = cosf(angleRad);
+	float angleSin = sinf(angleRad);
+
+	// Determine slice distribution along the angle
+	float sliceLength = MAX(width * ABS(angleCos), height * ABS(angleSin)) * 2.0f;
+	float totalWidth = sliceLength * 1.2f; // Add some margin
+	float sliceSpacing = totalWidth / numSlices;
+
+	// Create a temp world if using virtual buffer
+	PF_EffectWorld tempWorld;
+
+	if (useVirtualBuffer) {
+		// Notice the correct format for PF_NEW_WORLD, which is a macro:
+		// effect_ref, width, height, flags, world_ptr
+		ERR(PF_NEW_WORLD(in_data->effect_ref, width, height,
+			PF_NewWorldFlag_NONE, &tempWorld));
 	}
-	else {
-		ERR(suites.Iterate8Suite2()->iterate(in_data,
-			0,								// progress base
-			linesL,							// progress final
-			&params[SKELETON_INPUT]->u.ld,	// src 
-			NULL,							// area - null for all pixels
-			(void*)&giP,					// refcon - your custom data pointer
-			MySimpleGainFunc8,				// pixel function pointer
-			output));
+
+	// Clear the output
+	ERR(PF_FILL(NULL, NULL, output));
+
+	// For MFR compatibility, account for downsample
+	float downsample_factor_x = (float)in_data->downsample_x.den / (float)in_data->downsample_x.num;
+	float downsample_factor_y = (float)in_data->downsample_y.den / (float)in_data->downsample_y.num;
+
+	// Process each slice - using random order for AviUtl MultiSlicer_P style
+	for (A_long i = 0; i < numSlices; i++) {
+		// Set up slice info with MultiSlicer_P style randomness
+		SliceInfo sliceInfo;
+		sliceInfo.srcData = inputP->data;
+		sliceInfo.rowbytes = inputP->rowbytes;
+		sliceInfo.width = width;
+		sliceInfo.height = height;
+		sliceInfo.centerX = centerX;
+		sliceInfo.centerY = centerY;
+		sliceInfo.angleCos = angleCos;
+		sliceInfo.angleSin = angleSin;
+		sliceInfo.progress = progress;
+		sliceInfo.fade = fade;
+		sliceInfo.fadeWidth = fadeWidth;
+
+		// Calculate slice properties with randomness based on seed
+		float randomFactor = GetRandomValue(seed, i);
+		float sliceWidth = minWidth + randomFactor * (maxWidth - minWidth);
+
+		// Use randomness for offset too, just like MultiSlicer_P
+		float offsetRandomness = GetRandomValue(seed, i + numSlices);
+		float sliceOffset = (i - numSlices / 2.0f) * (20.0f * downsample_factor_x + offsetRandomness * 15.0f);
+
+		// Position slices with slight randomness in layout
+		float posRandomness = GetRandomValue(seed, i + numSlices * 2);
+		float sliceStart = -totalWidth / 2.0f + i * sliceSpacing + posRandomness * sliceSpacing * 0.2f;
+
+		// Set remaining slice info
+		sliceInfo.sliceStart = sliceStart;
+		sliceInfo.sliceWidth = sliceSpacing * sliceWidth;
+		sliceInfo.sliceOffset = sliceOffset;
+
+		// Create destination for this slice
+		PF_EffectWorld* destWorld = outputP;
+
+		// If using virtual buffer, render to temp world first
+		if (useVirtualBuffer) {
+			destWorld = &tempWorld;
+			ERR(PF_FILL(NULL, NULL, destWorld));
+		}
+
+		// Process this slice with appropriate pixel depth handling
+		if (PF_WORLD_IS_DEEP(inputP)) {
+			ERR(suites.Iterate16Suite1()->iterate(
+				in_data,
+				0,                // progress base
+				height,           // progress final
+				inputP,           // src 
+				NULL,             // area - null for all pixels
+				(void*)&sliceInfo,// refcon - our custom data
+				ProcessSlice16,   // pixel function
+				destWorld));      // dest
+		}
+		else {
+			ERR(suites.Iterate8Suite1()->iterate(
+				in_data,
+				0,                // progress base
+				height,           // progress final
+				inputP,           // src 
+				NULL,             // area - null for all pixels
+				(void*)&sliceInfo,// refcon - our custom data
+				ProcessSlice,     // pixel function
+				destWorld));      // dest
+		}
+
+		// If using virtual buffer, composite temp world onto output
+		if (useVirtualBuffer) {
+			// Handle both 8-bit and 16-bit color depths
+			if (PF_WORLD_IS_DEEP(output)) {
+				// 16-bit composition
+				for (int y = 0; y < height; y++) {
+					PF_Pixel16* tempRow = (PF_Pixel16*)((char*)tempWorld.data + y * tempWorld.rowbytes);
+					PF_Pixel16* outputRow = (PF_Pixel16*)((char*)output->data + y * output->rowbytes);
+
+					for (int x = 0; x < width; x++) {
+						PF_Pixel16 tempPix = tempRow[x];
+
+						// Only copy if alpha is not zero
+						if (tempPix.alpha > 0) {
+							outputRow[x] = tempPix;
+						}
+					}
+				}
+			}
+			else {
+				// 8-bit composition
+				for (int y = 0; y < height; y++) {
+					PF_Pixel* tempRow = (PF_Pixel*)((char*)tempWorld.data + y * tempWorld.rowbytes);
+					PF_Pixel* outputRow = (PF_Pixel*)((char*)output->data + y * output->rowbytes);
+
+					for (int x = 0; x < width; x++) {
+						PF_Pixel tempPix = tempRow[x];
+
+						// Only copy if alpha is not zero
+						if (tempPix.alpha > 0) {
+							outputRow[x] = tempPix;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Dispose temp world if needed
+	if (useVirtualBuffer) {
+		// Correct format for PF_DISPOSE_WORLD is also a macro:
+		// effect_ref, world_ptr
+		ERR(PF_DISPOSE_WORLD(in_data->effect_ref, &tempWorld));
 	}
 
 	return err;
@@ -253,7 +627,6 @@ EffectMain(
 	try {
 		switch (cmd) {
 		case PF_Cmd_ABOUT:
-
 			err = About(in_data,
 				out_data,
 				params,
@@ -261,7 +634,6 @@ EffectMain(
 			break;
 
 		case PF_Cmd_GLOBAL_SETUP:
-
 			err = GlobalSetup(in_data,
 				out_data,
 				params,
@@ -269,7 +641,6 @@ EffectMain(
 			break;
 
 		case PF_Cmd_PARAMS_SETUP:
-
 			err = ParamsSetup(in_data,
 				out_data,
 				params,
@@ -277,7 +648,6 @@ EffectMain(
 			break;
 
 		case PF_Cmd_RENDER:
-
 			err = Render(in_data,
 				out_data,
 				params,
@@ -290,4 +660,3 @@ EffectMain(
 	}
 	return err;
 }
-

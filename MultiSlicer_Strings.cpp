@@ -26,14 +26,19 @@ typedef struct {
 	A_char		str[256];
 } TableString;
 
-
-
 TableString		g_strs[StrID_NUMTYPES] = {
 	StrID_NONE,						"",
 	StrID_Name,						"MultiSlicer",
-	StrID_Description,				"An empty (skeletal, if you will) effect sample,\r for your modifying pleasure.\rCopyright 2007-2023 Adobe Inc.",
-	StrID_Gain_Param_Name,			"Gain",
-	StrID_Color_Param_Name,			"Color",
+	StrID_Description,				"Slices objects into multiple pieces with animation effects.\rBased on Aviutl's MultiSlicer_P script.\rCopyright 2023 Adobe Inc.",
+	StrID_Angle_Param_Name,			"Angle",
+	StrID_Progress_Param_Name,		"Progress",
+	StrID_Slices_Param_Name,		"Number of Slices",
+	StrID_MinWidth_Param_Name,		"Min Slice Width",
+	StrID_MaxWidth_Param_Name,		"Max Slice Width",
+	StrID_Seed_Param_Name,			"Seed",
+	StrID_Fade_Param_Name,			"Fade",
+	StrID_FadeWidth_Param_Name,		"Fade Width",
+	StrID_VirtualBuffer_Param_Name,	"Use Virtual Buffer",
 };
 
 
