@@ -49,10 +49,11 @@ resource 'PiPL' (16000) {
 		},
 		/* [10] */
 		AE_Effect_Global_OutFlags {
-		0x02000002 // PF_OutFlag_DEEP_COLOR_AWARE | PF_OutFlag_WIDE_TIME_INPUT
+		0x02000000 //50332160
+
 		},
 		AE_Effect_Global_OutFlags_2 {
-		0x00000400 // PF_OutFlag2_SUPPORTS_SMART_RENDER
+		0x00000000
 		},
 		/* [11] */
 		AE_Effect_Match_Name {
@@ -68,3 +69,4 @@ resource 'PiPL' (16000) {
 		}
 	}
 };
+

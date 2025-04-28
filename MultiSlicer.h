@@ -25,8 +25,8 @@
 
 #pragma once
 
-#ifndef SKELETON_H
-#define SKELETON_H
+#ifndef MultiSlicer_H
+#define MultiSlicer_H
 
 typedef unsigned char		u_char;
 typedef unsigned short		u_short;
@@ -37,13 +37,13 @@ typedef short int			int16;
 #define PF_TABLE_SZ_16	4096
 
 #define PF_DEEP_COLOR_AWARE 1	// make sure we get 16bpc pixels; 
-								// AE_Effect.h checks for this.
+// AE_Effect.h checks for this.
 
 #include "AEConfig.h"
 
 #ifdef AE_OS_WIN
-	typedef unsigned short PixelType;
-	#include <Windows.h>
+typedef unsigned short PixelType;
+#include <Windows.h>
 #endif
 
 #include "entry.h"
@@ -70,59 +70,39 @@ typedef short int			int16;
 
 /* Parameter defaults */
 
-#define SLICE_SHIFT_MIN       -10000
-#define SLICE_SHIFT_MAX       10000
-#define SLICE_SHIFT_DFLT      0
+#define	MultiSlicer_GAIN_MIN		0
+#define	MultiSlicer_GAIN_MAX		100
+#define	MultiSlicer_GAIN_DFLT		10
 
-#define SLICE_ANGLE_DFLT      0
+enum {
+	MultiSlicer_INPUT = 0,
+	MultiSlicer_GAIN,
+	MultiSlicer_COLOR,
+	MultiSlicer_NUM_PARAMS
+};
 
-#define SLICE_WIDTH_MIN       0
-#define SLICE_WIDTH_MAX       100
-#define SLICE_WIDTH_DFLT      100
+enum {
+	GAIN_DISK_ID = 1,
+	COLOR_DISK_ID,
+};
 
-#define SLICE_DIV_COUNT_MIN   1
-#define SLICE_DIV_COUNT_MAX   3000
-#define SLICE_DIV_COUNT_DFLT  10
-
-#define SLICE_SEED_MIN        0
-#define SLICE_SEED_MAX        10000
-#define SLICE_SEED_DFLT       0
-
-	enum {
-		SKELETON_INPUT = 0,
-		SLICE_SHIFT,
-		SLICE_ANGLE,
-		SLICE_WIDTH,
-		SLICE_DIV_COUNT,
-		SLICE_SEED,
-		SKELETON_NUM_PARAMS
-	};
-
-	enum {
-		SHIFT_DISK_ID = 1,
-		ANGLE_DISK_ID,
-		WIDTH_DISK_ID,
-		DIV_COUNT_DISK_ID,
-		SEED_DISK_ID
-	};
-
-typedef struct GainInfo{
+typedef struct GainInfo {
 	PF_FpLong	gainF;
-} GainInfo, *GainInfoP, **GainInfoH;
+} GainInfo, * GainInfoP, ** GainInfoH;
 
 
 extern "C" {
 
 	DllExport
-	PF_Err
-	EffectMain(
-		PF_Cmd			cmd,
-		PF_InData		*in_data,
-		PF_OutData		*out_data,
-		PF_ParamDef		*params[],
-		PF_LayerDef		*output,
-		void			*extra);
+		PF_Err
+		EffectMain(
+			PF_Cmd			cmd,
+			PF_InData* in_data,
+			PF_OutData* out_data,
+			PF_ParamDef* params[],
+			PF_LayerDef* output,
+			void* extra);
 
 }
 
-#endif // SKELETON_H
+#endif // MultiSlicer_H

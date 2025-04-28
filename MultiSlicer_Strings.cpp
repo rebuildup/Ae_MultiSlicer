@@ -28,19 +28,16 @@ typedef struct {
 
 
 
-TableString      g_strs[StrID_NUMTYPES] = {
-    StrID_NONE,                      "",
-    StrID_Name,                      "MultiSlicer",
-    StrID_Description,               "An effect that randomly slices and disassembles an image.\rCopyright 2007-2023 Adobe Inc.",
-    StrID_Shift_Param_Name,          "Shift Amount",
-    StrID_Angle_Param_Name,          "Angle",
-    StrID_Width_Param_Name,          "Width",
-    StrID_DivCount_Param_Name,       "Division Count",
-    StrID_Seed_Param_Name,           "Seed",
+TableString		g_strs[StrID_NUMTYPES] = {
+	StrID_NONE,						"",
+	StrID_Name,						"MultiSlicer",
+	StrID_Description,				"An empty (skeletal, if you will) effect sample,\r for your modifying pleasure.\rCopyright 2007-2023 Adobe Inc.",
+	StrID_Gain_Param_Name,			"Gain",
+	StrID_Color_Param_Name,			"Color",
 };
 
-char	*GetStringPtr(int strNum)
+
+char* GetStringPtr(int strNum)
 {
 	return g_strs[strNum].str;
 }
-	
