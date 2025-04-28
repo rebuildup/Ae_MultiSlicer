@@ -90,56 +90,44 @@ ParamsSetup(
 
     AEFX_CLR_STRUCT(def);
 
-    // Add an anchor point parameter (similar to Stretch_v2)
-    PF_ADD_POINT("Slice Center",
-        50, 50,         // Default to center (50%)
-        false,          // Don't restrict to frame boundary
-        ANCHOR_POINT_DISK_ID);
-
     // Angle parameter - determines the direction of slicing
-    AEFX_CLR_STRUCT(def);
     PF_ADD_ANGLE(STR(StrID_Angle_Param_Name),
         MULTISLICER_ANGLE_DFLT,
         ANGLE_DISK_ID);
 
     // Shift parameter - controls how much the slices move, in pixels
-    // Improved with decimal precision for finer adjustments
     AEFX_CLR_STRUCT(def);
+    // Key changes: 
+    // 1. Different display min/max for better slider control
+    // 2. PF_Precision_TENTHS for smoother dragging
     PF_ADD_FLOAT_SLIDERX(STR(StrID_Shift_Param_Name),
-        MULTISLICER_SHIFT_MIN,
-        MULTISLICER_SHIFT_MAX,
-        MULTISLICER_SHIFT_MIN,
-        MULTISLICER_SHIFT_MAX,
-        MULTISLICER_SHIFT_DFLT,
-        PF_Precision_TENTHS,   // Changed from INTEGER to TENTHS for finer control
+        MULTISLICER_SHIFT_MIN,    // Valid min value
+        MULTISLICER_SHIFT_MAX,    // Valid max value
+        -500,                     // Display min value (smaller range for more precision)
+        500,                      // Display max value
+        MULTISLICER_SHIFT_DFLT,   // Default value
+        PF_Precision_TENTHS,      // Show 1 decimal place for finer control
         0,
         0,
         SHIFT_DISK_ID);
 
-    // Direction popup (similar to Stretch_v2)
+    // Width parameter - controls the display width of split image
     AEFX_CLR_STRUCT(def);
-    PF_ADD_POPUP(STR(StrID_Direction_Param_Name),
-        3,              // Number of choices
-        1,              // Default value (indexed from 1)
-        "Both|Forward|Backward",
-        DIRECTION_DISK_ID);
-
-    // Width parameter - controls the display width of split image from 0-100%
-    // Improved with decimal precision for finer adjustments
-    AEFX_CLR_STRUCT(def);
+    // Improved precision for width adjustments
     PF_ADD_FLOAT_SLIDERX(STR(StrID_Width_Param_Name),
         MULTISLICER_WIDTH_MIN,
         MULTISLICER_WIDTH_MAX,
         MULTISLICER_WIDTH_MIN,
         MULTISLICER_WIDTH_MAX,
         MULTISLICER_WIDTH_DFLT,
-        PF_Precision_TENTHS,   // Changed from INTEGER to TENTHS for finer control
+        PF_Precision_TENTHS,     // Show 1 decimal place for finer control
         0,
         0,
         WIDTH_DISK_ID);
 
     // Number of slices parameter
     AEFX_CLR_STRUCT(def);
+    // For integer sliders, we use PF_ADD_SLIDER
     PF_ADD_SLIDER(STR(StrID_Slices_Param_Name),
         MULTISLICER_SLICES_MIN,
         MULTISLICER_SLICES_MAX,
@@ -150,6 +138,8 @@ ParamsSetup(
 
     // Seed for randomness
     AEFX_CLR_STRUCT(def);
+    // Allow direct numeric entry for precise seed control
+    PF_ParamFlags flags = PF_ParamFlag_CANNOT_TIME_VARY | PF_ParamFlag_CANNOT_INTERP;
     PF_ADD_SLIDER(STR(StrID_Seed_Param_Name),
         MULTISLICER_SEED_MIN,
         MULTISLICER_SEED_MAX,
@@ -157,6 +147,7 @@ ParamsSetup(
         MULTISLICER_SEED_MAX,
         MULTISLICER_SEED_DFLT,
         SEED_DISK_ID);
+    params[MULTISLICER_SEED]->flags |= flags;
 
     out_data->num_params = MULTISLICER_NUM_PARAMS;
 
