@@ -184,11 +184,12 @@ static void RotatePoint(
     y = newY;
 }
 
-// Returns whether the point (x,y) is inside the specified slice
 static bool IsPointInSlice(
     float x, float y,
     const SliceInfo* sliceInfoP)
 {
+    if (!sliceInfoP) return false;
+
     // Rotate point to slice space
     float rotatedX = x;
     float rotatedY = y;
@@ -217,35 +218,71 @@ static PF_Pixel GetSourcePixel(
 {
     PF_Pixel result = { 0, 0, 0, 0 }; // Default to transparent black
 
+    if (!sliceInfoP || !sliceInfoP->srcData) return result;
+
     // Bounds checking
     if (srcX >= 0 && srcX < sliceInfoP->width &&
         srcY >= 0 && srcY < sliceInfoP->height) {
 
         // Calculate the index in the source data
-        A_long srcIndex = ((A_long)srcY * sliceInfoP->rowbytes) + ((A_long)srcX * sizeof(PF_Pixel));
-        PF_Pixel* srcPix = (PF_Pixel*)((char*)sliceInfoP->srcData + srcIndex);
+        A_long srcOffset = ((A_long)srcY * sliceInfoP->rowbytes);
+        // Safety check to prevent overflow
+        if (srcOffset < 0 || srcOffset >= sliceInfoP->height * sliceInfoP->rowbytes) {
+            return result;
+        }
+
+        A_long pixOffset = ((A_long)srcX * sizeof(PF_Pixel));
+        // Safety check to prevent overflow
+        if (pixOffset < 0 || pixOffset >= sliceInfoP->width * sizeof(PF_Pixel)) {
+            return result;
+        }
+
+        A_long totalOffset = srcOffset + pixOffset;
+        // Final safety check
+        if (totalOffset < 0 || totalOffset >= sliceInfoP->height * sliceInfoP->rowbytes) {
+            return result;
+        }
+
+        PF_Pixel* srcPix = (PF_Pixel*)((char*)sliceInfoP->srcData + totalOffset);
 
         // Copy the pixel
         result = *srcPix;
     }
 
     return result;
-}
-
-// Get 16-bit pixel color from the source at given coordinates with bounds checking
+}// Get 16-bit pixel color from the source at given coordinates with bounds checking
 static PF_Pixel16 GetSourcePixel16(
     float srcX, float srcY,
     const SliceInfo* sliceInfoP)
 {
     PF_Pixel16 result = { 0, 0, 0, 0 }; // Default to transparent black
 
+    if (!sliceInfoP || !sliceInfoP->srcData) return result;
+
     // Bounds checking
     if (srcX >= 0 && srcX < sliceInfoP->width &&
         srcY >= 0 && srcY < sliceInfoP->height) {
 
-        // Calculate the index in the source data
-        A_long srcIndex = ((A_long)srcY * sliceInfoP->rowbytes) + ((A_long)srcX * sizeof(PF_Pixel16));
-        PF_Pixel16* srcPix = (PF_Pixel16*)((char*)sliceInfoP->srcData + srcIndex);
+        // Calculate the index in the source data (with additional safety checks)
+        A_long srcOffset = ((A_long)srcY * sliceInfoP->rowbytes);
+        // Safety check to prevent overflow
+        if (srcOffset < 0 || srcOffset >= sliceInfoP->height * sliceInfoP->rowbytes) {
+            return result;
+        }
+
+        A_long pixOffset = ((A_long)srcX * sizeof(PF_Pixel16));
+        // Safety check to prevent overflow
+        if (pixOffset < 0 || pixOffset >= sliceInfoP->width * sizeof(PF_Pixel16)) {
+            return result;
+        }
+
+        A_long totalOffset = srcOffset + pixOffset;
+        // Final safety check
+        if (totalOffset < 0 || totalOffset >= sliceInfoP->height * sliceInfoP->rowbytes) {
+            return result;
+        }
+
+        PF_Pixel16* srcPix = (PF_Pixel16*)((char*)sliceInfoP->srcData + totalOffset);
 
         // Copy the pixel
         result = *srcPix;
@@ -253,7 +290,6 @@ static PF_Pixel16 GetSourcePixel16(
 
     return result;
 }
-
 // Function to process a given (x,y) pixel for slice effects (8-bit)
 static PF_Err
 ProcessMultiSlice(
@@ -264,7 +300,33 @@ ProcessMultiSlice(
     PF_Pixel* out)
 {
     PF_Err err = PF_Err_NONE;
+
+    // Safety check for nullptr
+    if (!refcon || !in || !out) {
+        if (out) {
+            out->alpha = 0;
+            out->red = 0;
+            out->green = 0;
+            out->blue = 0;
+        }
+        return err;
+    }
+
     SliceInfo* sliceInfosArray = (SliceInfo*)refcon;
+
+    // Check for valid array
+    if (!sliceInfosArray) {
+        // Copy input to output as a failsafe
+        *out = *in;
+        return err;
+    }
+
+    // Get number of slices (with validation)
+    A_long numSlices = sliceInfosArray[0].numSlices;
+    if (numSlices <= 0 || numSlices > 1000) { // Sanity limit
+        *out = *in;
+        return err;
+    }
 
     // Check if we're in identity mode (no shift)
     if (sliceInfosArray[0].shiftAmount < 0.001f && sliceInfosArray[0].widthScale > 0.999f) {
@@ -281,8 +343,11 @@ ProcessMultiSlice(
 
     // Check if point is inside any slice
     bool foundSlice = false;
-    for (int i = 0; i < sliceInfosArray[0].numSlices; i++) {
+    for (int i = 0; i < numSlices; i++) {
         SliceInfo* currentSlice = &sliceInfosArray[i];
+
+        // Validate current slice
+        if (!currentSlice) continue;
 
         // Skip slices with zero width
         if (currentSlice->widthScale <= 0.001f) continue;
@@ -295,7 +360,7 @@ ProcessMultiSlice(
             float srcX = x - offsetPixels * currentSlice->angleSin;
             float srcY = y + offsetPixels * currentSlice->angleCos;
 
-            // Get the source pixel
+            // Get the source pixel (with validation)
             PF_Pixel srcPixel = GetSourcePixel(srcX, srcY, currentSlice);
 
             // Only use this pixel if it's not fully transparent
@@ -320,7 +385,33 @@ ProcessMultiSlice16(
     PF_Pixel16* out)
 {
     PF_Err err = PF_Err_NONE;
+
+    // Safety check for nullptr
+    if (!refcon || !in || !out) {
+        if (out) {
+            out->alpha = 0;
+            out->red = 0;
+            out->green = 0;
+            out->blue = 0;
+        }
+        return err;
+    }
+
     SliceInfo* sliceInfosArray = (SliceInfo*)refcon;
+
+    // Check for valid array
+    if (!sliceInfosArray) {
+        // Copy input to output as a failsafe
+        *out = *in;
+        return err;
+    }
+
+    // Get number of slices (with validation)
+    A_long numSlices = sliceInfosArray[0].numSlices;
+    if (numSlices <= 0 || numSlices > 1000) { // Sanity limit
+        *out = *in;
+        return err;
+    }
 
     // Check if we're in identity mode (no shift)
     if (sliceInfosArray[0].shiftAmount < 0.001f && sliceInfosArray[0].widthScale > 0.999f) {
@@ -337,8 +428,11 @@ ProcessMultiSlice16(
 
     // Check if point is inside any slice
     bool foundSlice = false;
-    for (int i = 0; i < sliceInfosArray[0].numSlices; i++) {
+    for (int i = 0; i < numSlices; i++) {
         SliceInfo* currentSlice = &sliceInfosArray[i];
+
+        // Validate current slice
+        if (!currentSlice) continue;
 
         // Skip slices with zero width
         if (currentSlice->widthScale <= 0.001f) continue;
@@ -351,7 +445,7 @@ ProcessMultiSlice16(
             float srcX = x - offsetPixels * currentSlice->angleSin;
             float srcY = y + offsetPixels * currentSlice->angleCos;
 
-            // Get the source pixel
+            // Get the source pixel (with validation)
             PF_Pixel16 srcPixel = GetSourcePixel16(srcX, srcY, currentSlice);
 
             // Only use this pixel if it's not fully transparent
@@ -378,36 +472,40 @@ Render(
     PF_EffectWorld* inputP = &params[MULTISLICER_INPUT]->u.ld;
     PF_EffectWorld* outputP = output;
 
-    // Get image dimensions
-    A_long imageWidth = inputP->width;
-    A_long imageHeight = inputP->height;
-
     // Extract parameters
-    // Get anchor point from normalized coordinates (as percentage of width/height)
-    A_long anchorX = (params[MULTISLICER_ANCHOR_POINT]->u.td.x_value >> 16) * imageWidth / 100;
-    A_long anchorY = (params[MULTISLICER_ANCHOR_POINT]->u.td.y_value >> 16) * imageHeight / 100;
-
     A_long angle = params[MULTISLICER_ANGLE]->u.ad.value;
     float shiftRaw = params[MULTISLICER_SHIFT]->u.fs_d.value;
-    A_long direction = params[MULTISLICER_DIRECTION]->u.pd.value; // 1=Both, 2=Forward, 3=Backward
     float width = params[MULTISLICER_WIDTH]->u.fs_d.value / 100.0f;
     A_long numSlices = params[MULTISLICER_SLICES]->u.sd.value;
     A_long seed = params[MULTISLICER_SEED]->u.sd.value;
 
-    // Determine shift direction based on direction parameter and sign
-    float shiftDirection = 1.0f;
-    if (direction == 3) { // Backward
-        shiftDirection = -1.0f;
-    }
-    // If direction is "Both", we'll apply direction randomization per slice
+    // Validate parameters for safety
+    numSlices = CLAMP(numSlices, 1, 1000); // Limit max slices for safety
+    width = CLAMP(width, 0.0f, 1.0f);      // Ensure width is valid
+
+    // Determine shift direction based on sign
+    float shiftDirection = (shiftRaw >= 0) ? 1.0f : -1.0f;
 
     // Calculate downsampling factors for composition display resolution
-    float downsize_x = static_cast<float>(in_data->downsample_x.den) / static_cast<float>(in_data->downsample_x.num);
-    float downsize_y = static_cast<float>(in_data->downsample_y.den) / static_cast<float>(in_data->downsample_y.num);
+    float downsize_x = 1.0f;
+    float downsize_y = 1.0f;
+
+    // Safely extract downsample values
+    if (in_data->downsample_x.num != 0) {
+        downsize_x = static_cast<float>(in_data->downsample_x.den) /
+            static_cast<float>(in_data->downsample_x.num);
+    }
+
+    if (in_data->downsample_y.num != 0) {
+        downsize_y = static_cast<float>(in_data->downsample_y.den) /
+            static_cast<float>(in_data->downsample_y.num);
+    }
 
     // Adjust shift amount based on composition display resolution
     // Using minimum of x and y factors to maintain proportions
     float resolution_factor = MIN(downsize_x, downsize_y);
+    if (resolution_factor <= 0.0f) resolution_factor = 1.0f; // Safety check
+
     float shiftAmount = fabsf(shiftRaw) / resolution_factor;
 
     // Fast path for identity case
@@ -422,6 +520,12 @@ Render(
         return err;
     }
 
+    // Get image dimensions
+    A_long imageWidth = inputP->width;
+    A_long imageHeight = inputP->height;
+    A_long centerX = imageWidth / 2;
+    A_long centerY = imageHeight / 2;
+
     // Calculate angle in radians
     float angleRad = (float)angle * PF_RAD_PER_DEGREE;
     float angleCos = cosf(angleRad);
@@ -433,7 +537,7 @@ Render(
         imageHeight * fabsf(angleCos) + imageWidth * fabsf(angleSin)
     );
 
-    float sliceSpacing = sliceLength / numSlices;
+    float sliceSpacing = sliceLength / (numSlices > 0 ? numSlices : 1); // Avoid division by zero
 
     // Create a handle for our slice info array
     PF_Handle sliceInfosHandle = suites.HandleSuite1()->host_new_handle(numSlices * sizeof(SliceInfo));
@@ -441,12 +545,15 @@ Render(
         return PF_Err_OUT_OF_MEMORY;
     }
 
-    // Lock the handle to get a pointer to the memory
+    // Get a pointer to the handle memory
     SliceInfo* sliceInfos = *((SliceInfo**)sliceInfosHandle);
     if (!sliceInfos) {
         suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
         return PF_Err_OUT_OF_MEMORY;
     }
+
+    // Initialize all memory to zero first
+    memset(sliceInfos, 0, numSlices * sizeof(SliceInfo));
 
     // Fill the array with slice information
     for (A_long i = 0; i < numSlices; i++) {
@@ -455,26 +562,20 @@ Render(
         sliceInfos[i].rowbytes = inputP->rowbytes;
         sliceInfos[i].width = imageWidth;
         sliceInfos[i].height = imageHeight;
-        sliceInfos[i].centerX = anchorX;   // Use anchor point instead of center
-        sliceInfos[i].centerY = anchorY;   // Use anchor point instead of center
+        sliceInfos[i].centerX = centerX;
+        sliceInfos[i].centerY = centerY;
         sliceInfos[i].angleCos = angleCos;
         sliceInfos[i].angleSin = angleSin;
         sliceInfos[i].numSlices = numSlices;
         sliceInfos[i].widthScale = width;
         sliceInfos[i].shiftAmount = shiftAmount;
-        sliceInfos[i].directionMode = direction;
 
         // Generate randomness for this slice
         float randomPos = (GetRandomValue(seed, i + numSlices * 3) - 0.5f) * 0.3f; // -0.15 to 0.15
         float randomWidth = GetRandomValue(seed, i) * 0.5f + 0.75f;   // 0.75 to 1.25
+        float randomDir = (GetRandomValue(seed, i + numSlices) > 0.5f) ? 1.0f : -1.0f;
 
-        // Direction randomization (only for "Both" mode)
-        float randomDir = 1.0f;
-        if (direction == 1) { // Both directions
-            randomDir = (GetRandomValue(seed, i + numSlices) > 0.5f) ? 1.0f : -1.0f;
-        }
-
-        // Get a strong random factor for shift amount (0.5 to 2.5)
+        // Get a random factor for shift amount (0.5 to 2.5)
         float randomShiftFactor = GetRandomValue(seed, i + numSlices * 4) * 2.0f + 0.5f;
 
         // Set slice properties with randomization
