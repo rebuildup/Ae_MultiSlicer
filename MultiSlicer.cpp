@@ -90,12 +90,20 @@ ParamsSetup(
 
     AEFX_CLR_STRUCT(def);
 
+    // Add an anchor point parameter (similar to Stretch_v2)
+    PF_ADD_POINT("Slice Center",
+        50, 50,         // Default to center (50%)
+        false,          // Don't restrict to frame boundary
+        ANCHOR_POINT_DISK_ID);
+
     // Angle parameter - determines the direction of slicing
+    AEFX_CLR_STRUCT(def);
     PF_ADD_ANGLE(STR(StrID_Angle_Param_Name),
         MULTISLICER_ANGLE_DFLT,
         ANGLE_DISK_ID);
 
     // Shift parameter - controls how much the slices move, in pixels
+    // Improved with decimal precision for finer adjustments
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX(STR(StrID_Shift_Param_Name),
         MULTISLICER_SHIFT_MIN,
@@ -103,12 +111,21 @@ ParamsSetup(
         MULTISLICER_SHIFT_MIN,
         MULTISLICER_SHIFT_MAX,
         MULTISLICER_SHIFT_DFLT,
-        PF_Precision_INTEGER,
+        PF_Precision_TENTHS,   // Changed from INTEGER to TENTHS for finer control
         0,
         0,
         SHIFT_DISK_ID);
 
+    // Direction popup (similar to Stretch_v2)
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_POPUP(STR(StrID_Direction_Param_Name),
+        3,              // Number of choices
+        1,              // Default value (indexed from 1)
+        "Both|Forward|Backward",
+        DIRECTION_DISK_ID);
+
     // Width parameter - controls the display width of split image from 0-100%
+    // Improved with decimal precision for finer adjustments
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX(STR(StrID_Width_Param_Name),
         MULTISLICER_WIDTH_MIN,
@@ -116,7 +133,7 @@ ParamsSetup(
         MULTISLICER_WIDTH_MIN,
         MULTISLICER_WIDTH_MAX,
         MULTISLICER_WIDTH_DFLT,
-        PF_Precision_INTEGER,
+        PF_Precision_TENTHS,   // Changed from INTEGER to TENTHS for finer control
         0,
         0,
         WIDTH_DISK_ID);
@@ -370,15 +387,28 @@ Render(
     PF_EffectWorld* inputP = &params[MULTISLICER_INPUT]->u.ld;
     PF_EffectWorld* outputP = output;
 
+    // Get image dimensions
+    A_long imageWidth = inputP->width;
+    A_long imageHeight = inputP->height;
+
     // Extract parameters
+    // Get anchor point from normalized coordinates (as percentage of width/height)
+    A_long anchorX = (params[MULTISLICER_ANCHOR_POINT]->u.td.x_value >> 16) * imageWidth / 100;
+    A_long anchorY = (params[MULTISLICER_ANCHOR_POINT]->u.td.y_value >> 16) * imageHeight / 100;
+
     A_long angle = params[MULTISLICER_ANGLE]->u.ad.value;
     float shiftRaw = params[MULTISLICER_SHIFT]->u.fs_d.value;
+    A_long direction = params[MULTISLICER_DIRECTION]->u.pd.value; // 1=Both, 2=Forward, 3=Backward
     float width = params[MULTISLICER_WIDTH]->u.fs_d.value / 100.0f;
     A_long numSlices = params[MULTISLICER_SLICES]->u.sd.value;
     A_long seed = params[MULTISLICER_SEED]->u.sd.value;
 
-    // Determine shift direction based on sign
-    float shiftDirection = (shiftRaw >= 0) ? 1.0f : -1.0f;
+    // Determine shift direction based on direction parameter and sign
+    float shiftDirection = 1.0f;
+    if (direction == 3) { // Backward
+        shiftDirection = -1.0f;
+    }
+    // If direction is "Both", we'll apply direction randomization per slice
 
     // Calculate downsampling factors for composition display resolution
     float downsize_x = static_cast<float>(in_data->downsample_x.den) / static_cast<float>(in_data->downsample_x.num);
@@ -386,7 +416,7 @@ Render(
 
     // Adjust shift amount based on composition display resolution
     // Using minimum of x and y factors to maintain proportions
-    float resolution_factor = min(downsize_x, downsize_y);
+    float resolution_factor = MIN(downsize_x, downsize_y);
     float shiftAmount = fabsf(shiftRaw) / resolution_factor;
 
     // Fast path for identity case
@@ -400,12 +430,6 @@ Render(
             NULL));
         return err;
     }
-
-    // Get image dimensions
-    A_long imageWidth = inputP->width;
-    A_long imageHeight = inputP->height;
-    A_long centerX = imageWidth / 2;
-    A_long centerY = imageHeight / 2;
 
     // Calculate angle in radians
     float angleRad = (float)angle * PF_RAD_PER_DEGREE;
@@ -440,18 +464,24 @@ Render(
         sliceInfos[i].rowbytes = inputP->rowbytes;
         sliceInfos[i].width = imageWidth;
         sliceInfos[i].height = imageHeight;
-        sliceInfos[i].centerX = centerX;
-        sliceInfos[i].centerY = centerY;
+        sliceInfos[i].centerX = anchorX;   // Use anchor point instead of center
+        sliceInfos[i].centerY = anchorY;   // Use anchor point instead of center
         sliceInfos[i].angleCos = angleCos;
         sliceInfos[i].angleSin = angleSin;
         sliceInfos[i].numSlices = numSlices;
         sliceInfos[i].widthScale = width;
         sliceInfos[i].shiftAmount = shiftAmount;
+        sliceInfos[i].directionMode = direction;
 
         // Generate randomness for this slice
         float randomPos = (GetRandomValue(seed, i + numSlices * 3) - 0.5f) * 0.3f; // -0.15 to 0.15
         float randomWidth = GetRandomValue(seed, i) * 0.5f + 0.75f;   // 0.75 to 1.25
-        float randomDir = (GetRandomValue(seed, i + numSlices) > 0.5f) ? 1.0f : -1.0f;
+
+        // Direction randomization (only for "Both" mode)
+        float randomDir = 1.0f;
+        if (direction == 1) { // Both directions
+            randomDir = (GetRandomValue(seed, i + numSlices) > 0.5f) ? 1.0f : -1.0f;
+        }
 
         // Get a strong random factor for shift amount (0.5 to 2.5)
         float randomShiftFactor = GetRandomValue(seed, i + numSlices * 4) * 2.0f + 0.5f;

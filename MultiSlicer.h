@@ -78,18 +78,22 @@ typedef unsigned short PixelType;
 
 #define MULTISLICER_ANGLE_DFLT        0
 
+// Extend range but keep default at 0
 #define MULTISLICER_SHIFT_MIN         -10000
 #define MULTISLICER_SHIFT_MAX         10000
 #define MULTISLICER_SHIFT_DFLT        0
 
+// Allow decimal precision for width
 #define MULTISLICER_WIDTH_MIN         0
 #define MULTISLICER_WIDTH_MAX         100
 #define MULTISLICER_WIDTH_DFLT        100
 
+// More reasonable number of slices range
 #define MULTISLICER_SLICES_MIN        2
 #define MULTISLICER_SLICES_MAX        100
 #define MULTISLICER_SLICES_DFLT       10
 
+// Better seed range
 #define MULTISLICER_SEED_MIN          0
 #define MULTISLICER_SEED_MAX          10000
 #define MULTISLICER_SEED_DFLT         1234
@@ -102,8 +106,10 @@ typedef unsigned short PixelType;
 
 enum {
     MULTISLICER_INPUT = 0,
+    MULTISLICER_ANCHOR_POINT,      // New anchor point parameter
     MULTISLICER_ANGLE,
     MULTISLICER_SHIFT,
+    MULTISLICER_DIRECTION,         // New direction parameter
     MULTISLICER_WIDTH,
     MULTISLICER_SLICES,
     MULTISLICER_SEED,
@@ -111,8 +117,10 @@ enum {
 };
 
 enum {
-    ANGLE_DISK_ID = 1,
+    ANCHOR_POINT_DISK_ID = 1,
+    ANGLE_DISK_ID,
     SHIFT_DISK_ID,
+    DIRECTION_DISK_ID,
     WIDTH_DISK_ID,
     SLICES_DISK_ID,
     SEED_DISK_ID
@@ -125,8 +133,8 @@ typedef struct SliceInfo {
     A_long    width;            // Width of source
     A_long    height;           // Height of source
     A_long    numSlices;        // Total number of slices
-    float     centerX;          // Center X coordinate
-    float     centerY;          // Center Y coordinate
+    float     centerX;          // Center X coordinate (from anchor point)
+    float     centerY;          // Center Y coordinate (from anchor point)
     float     angleCos;         // Cosine of angle
     float     angleSin;         // Sine of angle
     float     sliceStart;       // Starting position of slice
@@ -135,6 +143,7 @@ typedef struct SliceInfo {
     float     shiftDirection;   // Direction of shift (-1 or 1)
     float     shiftRandomFactor;// Random multiplier for shift amount
     float     widthScale;       // Width scale factor (0-1)
+    int       directionMode;    // Direction mode (1=Both, 2=Forward, 3=Backward)
 } SliceInfo, * SliceInfoP, ** SliceInfoH;
 
 
