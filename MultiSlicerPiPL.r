@@ -41,7 +41,7 @@ resource 'PiPL' (16000) {
 		},
 		/* [8] */
 		AE_Effect_Version {
-			524288	/* 1.0 */
+			0x00080001 /* Must match version in GlobalSetup */
 		},
 		/* [9] */
 		AE_Effect_Info_Flags {
@@ -49,11 +49,10 @@ resource 'PiPL' (16000) {
 		},
 		/* [10] */
 		AE_Effect_Global_OutFlags {
-		0x02000000 //50332160
-
+			0x06000400 /* Matches the out_flags in GlobalSetup */
 		},
 		AE_Effect_Global_OutFlags_2 {
-		0x00000000
+			0x08000000 /* PF_OutFlag2_SUPPORTS_THREADED_RENDERING */
 		},
 		/* [11] */
 		AE_Effect_Match_Name {
