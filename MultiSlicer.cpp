@@ -80,17 +80,22 @@ GlobalSetup(
         return PF_Err_INTERNAL_STRUCT_DAMAGED;
     }
 
+    // IMPORTANT: Use PF_VERSION macro to set version correctly
     out_data->my_version = PF_VERSION(MAJOR_VERSION,
         MINOR_VERSION,
         BUG_VERSION,
         STAGE_VERSION,
         BUILD_VERSION);
 
-    // Support 16-bit, multiprocessing, and Multi-Frame Rendering
-    out_data->out_flags = PF_OutFlag_DEEP_COLOR_AWARE;
+    // Set these flags exactly as they appear in PiPL
+    // The hex value 0x06000400 matches the PiPL file
+    out_data->out_flags = 0;  // Reset to zero first
+    out_data->out_flags |= PF_OutFlag_DEEP_COLOR_AWARE;
     out_data->out_flags |= PF_OutFlag_PIX_INDEPENDENT;
-    out_data->out_flags |= PF_OutFlag_SEND_UPDATE_PARAMS_UI;
-    out_data->out_flags |= PF_OutFlag_USE_OUTPUT_EXTENT;  // Improve stability with transformed layers
+    out_data->out_flags |= PF_OutFlag_USE_OUTPUT_EXTENT;
+
+    // IMPORTANT: Do not add PF_OutFlag_SEND_UPDATE_PARAMS_UI here
+    // as it's not included in the PiPL resource
 
     // Enable Multi-Frame Rendering support
     out_data->out_flags2 = PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
@@ -170,7 +175,7 @@ ParamsSetup(
             SEED_DISK_ID);
         params[MULTISLICER_SEED]->flags |= flags;
 
-        // Set the total number of parameters
+        // Set the total number of parameters - IMPORTANT: Must match the enum MULTISLICER_NUM_PARAMS
         out_data->num_params = MULTISLICER_NUM_PARAMS;
     }
     catch (PF_Err& thrown_err) {
