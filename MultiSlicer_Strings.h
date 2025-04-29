@@ -25,12 +25,13 @@ typedef enum {
     StrID_NONE,
     StrID_Name,
     StrID_Description,
-    StrID_Anchor_Point_Param_Name,
     StrID_Angle_Param_Name,
     StrID_Shift_Param_Name,
-    StrID_Direction_Param_Name,
     StrID_Width_Param_Name,
     StrID_Slices_Param_Name,
     StrID_Seed_Param_Name,
     StrID_NUMTYPES
 } StrIDType;
+
+// Function to retrieve string pointers
+char* GetStringPtr(int strNum);

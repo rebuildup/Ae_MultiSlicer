@@ -30,10 +30,8 @@ TableString     g_strs[StrID_NUMTYPES] = {
     StrID_NONE,                         "",
     StrID_Name,                         "MultiSlicer",
     StrID_Description,                  "Slices objects into multiple pieces with randomized shifting effects.\rCopyright 2025 Adobe Inc.",
-    StrID_Anchor_Point_Param_Name,      "Slice Center",
     StrID_Angle_Param_Name,             "Angle",
     StrID_Shift_Param_Name,             "Shift Amount",
-    StrID_Direction_Param_Name,         "Direction",
     StrID_Width_Param_Name,             "Width",
     StrID_Slices_Param_Name,            "Number of Slices",
     StrID_Seed_Param_Name,              "Seed",
@@ -42,5 +40,10 @@ TableString     g_strs[StrID_NUMTYPES] = {
 
 char* GetStringPtr(int strNum)
 {
+    // Validate string index to prevent out-of-bounds access
+    if (strNum < 0 || strNum >= StrID_NUMTYPES) {
+        return g_strs[StrID_NONE].str;
+    }
+
     return g_strs[strNum].str;
 }
