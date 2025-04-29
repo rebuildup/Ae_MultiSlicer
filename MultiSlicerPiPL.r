@@ -4,13 +4,6 @@
 #ifndef AE_OS_WIN
 	#include <AE_General.r>
 #endif
-
-// Must match the values in MultiSlicer.h exactly
-#define MAJOR_VERSION    1
-#define MINOR_VERSION    0
-#define BUG_VERSION      1
-#define STAGE_VERSION    PF_Stage_DEVELOP
-#define BUILD_VERSION    1
 	
 resource 'PiPL' (16000) {
 	{	/* array properties: 12 elements */
@@ -48,7 +41,7 @@ resource 'PiPL' (16000) {
 		},
 		/* [8] */
 		AE_Effect_Version {
-			65537 /* Correctly set to 1.0.1 (1<<16 | 0<<8 | 1) */
+			0x00080001 /* Must match version in GlobalSetup */
 		},
 		/* [9] */
 		AE_Effect_Info_Flags {
@@ -56,21 +49,20 @@ resource 'PiPL' (16000) {
 		},
 		/* [10] */
 		AE_Effect_Global_OutFlags {
-			0x06000400 /* DEEP_COLOR_AWARE | PIX_INDEPENDENT | USE_OUTPUT_EXTENT */
+			0x06000400 /* Matches the out_flags in GlobalSetup */
 		},
-		/* [11] */
 		AE_Effect_Global_OutFlags_2 {
 			0x08000000 /* PF_OutFlag2_SUPPORTS_THREADED_RENDERING */
 		},
-		/* [12] */
+		/* [11] */
 		AE_Effect_Match_Name {
 			"ADBE MultiSlicer"
 		},
-		/* [13] */
+		/* [12] */
 		AE_Reserved_Info {
 			0
 		},
-		/* [14] */
+		/* [13] */
 		AE_Effect_Support_URL {
 			"https://www.adobe.com"
 		}

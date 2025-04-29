@@ -32,6 +32,3 @@ typedef enum {
     StrID_Seed_Param_Name,
     StrID_NUMTYPES
 } StrIDType;
-
-// Function to retrieve string pointers
-char* GetStringPtr(int strNum);
