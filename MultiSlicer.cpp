@@ -98,11 +98,11 @@ ParamsSetup(
     // Shift parameter - controls how much the slices move, in pixels
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX(STR(StrID_Shift_Param_Name),
-        MULTISLICER_SHIFT_MIN,
-        MULTISLICER_SHIFT_MAX,
-        MULTISLICER_SHIFT_MIN,
-        MULTISLICER_SHIFT_MAX,
-        MULTISLICER_SHIFT_DFLT,
+        -10000,
+        10000,
+        -500,
+        500,
+        0,
         PF_Precision_INTEGER,
         0,
         0,
@@ -111,11 +111,11 @@ ParamsSetup(
     // Width parameter - controls the display width of split image from 0-100%
     AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX(STR(StrID_Width_Param_Name),
-        MULTISLICER_WIDTH_MIN,
-        MULTISLICER_WIDTH_MAX,
-        MULTISLICER_WIDTH_MIN,
-        MULTISLICER_WIDTH_MAX,
-        MULTISLICER_WIDTH_DFLT,
+        0,
+        100,
+        0,
+        100,
+        100,
         PF_Precision_INTEGER,
         0,
         0,
@@ -124,21 +124,21 @@ ParamsSetup(
     // Number of slices parameter
     AEFX_CLR_STRUCT(def);
     PF_ADD_SLIDER(STR(StrID_Slices_Param_Name),
-        MULTISLICER_SLICES_MIN,
-        MULTISLICER_SLICES_MAX,
-        MULTISLICER_SLICES_MIN,
-        MULTISLICER_SLICES_MAX,
-        MULTISLICER_SLICES_DFLT,
+        1,
+        1000,
+        1,
+        50,
+        1,
         SLICES_DISK_ID);
 
     // Seed for randomness
     AEFX_CLR_STRUCT(def);
     PF_ADD_SLIDER(STR(StrID_Seed_Param_Name),
-        MULTISLICER_SEED_MIN,
-        MULTISLICER_SEED_MAX,
-        MULTISLICER_SEED_MIN,
-        MULTISLICER_SEED_MAX,
-        MULTISLICER_SEED_DFLT,
+        0,
+        10000,
+        0,
+        500,
+        0,
         SEED_DISK_ID);
 
     out_data->num_params = MULTISLICER_NUM_PARAMS;
@@ -283,9 +283,10 @@ ProcessMultiSlice(
             // Calculate the shift amount in pixels using the randomized shift multiplier
             float offsetPixels = currentSlice->shiftAmount * currentSlice->shiftRandomFactor * currentSlice->shiftDirection;
 
-            // Calculate source coordinates based on the shift
-            float srcX = x - offsetPixels * currentSlice->angleSin;
-            float srcY = y + offsetPixels * currentSlice->angleCos;
+            // FIX: Fixed direction calculation to use perpendicular direction
+            // Matching the perpendicular direction in Skeleton.cpp (-sin(angle), cos(angle))
+            float srcX = x + currentSlice->angleSin * offsetPixels;
+            float srcY = y - currentSlice->angleCos * offsetPixels;
 
             // Get the source pixel
             PF_Pixel srcPixel = GetSourcePixel(srcX, srcY, currentSlice);
@@ -339,9 +340,10 @@ ProcessMultiSlice16(
             // Calculate the shift amount in pixels using the randomized shift multiplier
             float offsetPixels = currentSlice->shiftAmount * currentSlice->shiftRandomFactor * currentSlice->shiftDirection;
 
-            // Calculate source coordinates based on the shift
-            float srcX = x - offsetPixels * currentSlice->angleSin;
-            float srcY = y + offsetPixels * currentSlice->angleCos;
+            // FIX: Fixed direction calculation to use perpendicular direction
+            // Matching the perpendicular direction in Skeleton.cpp (-sin(angle), cos(angle))
+            float srcX = x + currentSlice->angleSin * offsetPixels;
+            float srcY = y - currentSlice->angleCos * offsetPixels;
 
             // Get the source pixel
             PF_Pixel16 srcPixel = GetSourcePixel16(srcX, srcY, currentSlice);
@@ -357,6 +359,7 @@ ProcessMultiSlice16(
 
     return err;
 }
+
 static PF_Err
 Render(
     PF_InData* in_data,
@@ -369,8 +372,8 @@ Render(
     PF_EffectWorld* inputP = &params[MULTISLICER_INPUT]->u.ld;
     PF_EffectWorld* outputP = output;
 
-    // Extract parameters
-    A_long angle = params[MULTISLICER_ANGLE]->u.ad.value;
+    // Extract parameters with proper bit-shift for angle
+    A_long angle_long = params[MULTISLICER_ANGLE]->u.ad.value >> 16;
     float shiftRaw = params[MULTISLICER_SHIFT]->u.fs_d.value;
     float width = params[MULTISLICER_WIDTH]->u.fs_d.value / 100.0f;
     A_long numSlices = params[MULTISLICER_SLICES]->u.sd.value;
@@ -384,7 +387,6 @@ Render(
     float downsize_y = static_cast<float>(in_data->downsample_y.den) / static_cast<float>(in_data->downsample_y.num);
 
     // Adjust shift amount based on composition display resolution
-    // Using minimum of x and y factors to maintain proportions
     float resolution_factor = min(downsize_x, downsize_y);
     float shiftAmount = fabsf(shiftRaw) / resolution_factor;
 
@@ -407,7 +409,7 @@ Render(
     A_long centerY = imageHeight / 2;
 
     // Calculate angle in radians
-    float angleRad = (float)angle * PF_RAD_PER_DEGREE;
+    float angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
     float angleCos = cosf(angleRad);
     float angleSin = sinf(angleRad);
 
@@ -418,6 +420,15 @@ Render(
     );
 
     float sliceSpacing = sliceLength / numSlices;
+
+    // NEW: Add global seed-based offset for the entire slice pattern
+    // This will shift where the slicing begins based on the seed
+    float globalOffset = (GetRandomValue(seed, 12345) - 0.5f) * sliceLength;
+
+    // NEW: Add randomization to slice spacing
+    // This value will multiply the standard spacing (values between 0.8 and 1.2)
+    float spacingVariation = GetRandomValue(seed, 67890) * 0.4f + 0.8f;
+    sliceSpacing *= spacingVariation;
 
     // Create a handle for our slice info array
     PF_Handle sliceInfosHandle = suites.HandleSuite1()->host_new_handle(numSlices * sizeof(SliceInfo));
@@ -430,6 +441,42 @@ Render(
     if (!sliceInfos) {
         suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
         return PF_Err_OUT_OF_MEMORY;
+    }
+
+    // Special case handling for Width = 100%
+    bool perfectTiling = (width > 0.999f);
+
+    // NEW: Create a permutation of slice indices based on seed
+    // This will allow non-linear distribution of slices
+    PF_Handle permutationHandle = suites.HandleSuite1()->host_new_handle(numSlices * sizeof(A_long));
+    if (!permutationHandle) {
+        suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
+        return PF_Err_OUT_OF_MEMORY;
+    }
+
+    A_long* permutation = *((A_long**)permutationHandle);
+    if (!permutation) {
+        suites.HandleSuite1()->host_dispose_handle(permutationHandle);
+        suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
+        return PF_Err_OUT_OF_MEMORY;
+    }
+
+    // Initialize permutation
+    for (A_long i = 0; i < numSlices; i++) {
+        permutation[i] = i;
+    }
+
+    // NEW: Simple shuffle algorithm based on seed
+    // Only if not in perfect tiling mode
+    if (!perfectTiling) {
+        for (A_long i = numSlices - 1; i > 0; i--) {
+            A_long j = (A_long)(GetRandomValue(seed, i) * (i + 1));
+            if (j > i) j = i;
+            // Swap i and j
+            A_long temp = permutation[i];
+            permutation[i] = permutation[j];
+            permutation[j] = temp;
+        }
     }
 
     // Fill the array with slice information
@@ -447,20 +494,41 @@ Render(
         sliceInfos[i].widthScale = width;
         sliceInfos[i].shiftAmount = shiftAmount;
 
-        // Generate randomness for this slice
-        float randomPos = (GetRandomValue(seed, i + numSlices * 3) - 0.5f) * 0.3f; // -0.15 to 0.15
-        float randomWidth = GetRandomValue(seed, i) * 0.5f + 0.75f;   // 0.75 to 1.25
-        float randomDir = (GetRandomValue(seed, i + numSlices) > 0.5f) ? 1.0f : -1.0f;
+        float randomWidth, randomPos;
 
-        // Get a strong random factor for shift amount (0.5 to 2.5)
+        if (perfectTiling) {
+            // For perfect tiling (Width = 100%), ensure exact alignment
+            randomPos = 0.0f;
+            randomWidth = 1.0f;
+
+            // Set slice properties with global offset but no individual randomization
+            sliceInfos[i].sliceStart = -sliceLength / 2.0f + i * sliceSpacing + globalOffset;
+            sliceInfos[i].sliceWidth = sliceSpacing;
+        }
+        else {
+            // Use permutation to create more varied patterns
+            A_long permutedIndex = permutation[i];
+
+            // Original randomization for width < 100%
+            randomPos = (GetRandomValue(seed, i + numSlices * 3) - 0.5f) * 0.3f; // -0.15 to 0.15
+            randomWidth = GetRandomValue(seed, i) * 0.5f + 0.75f;   // 0.75 to 1.25
+
+            // Set slice properties with randomization and global offset
+            sliceInfos[i].sliceStart = -sliceLength / 2.0f + permutedIndex * sliceSpacing +
+                randomPos * sliceSpacing + globalOffset;
+            sliceInfos[i].sliceWidth = sliceSpacing * randomWidth;
+        }
+
+        // Random direction and shift factor remain the same
+        float randomDir = (GetRandomValue(seed, i + numSlices) > 0.5f) ? 1.0f : -1.0f;
         float randomShiftFactor = GetRandomValue(seed, i + numSlices * 4) * 2.0f + 0.5f;
 
-        // Set slice properties with randomization
-        sliceInfos[i].sliceStart = -sliceLength / 2.0f + i * sliceSpacing + randomPos * sliceSpacing;
-        sliceInfos[i].sliceWidth = sliceSpacing * randomWidth;
         sliceInfos[i].shiftDirection = shiftDirection * randomDir;
         sliceInfos[i].shiftRandomFactor = randomShiftFactor;
     }
+
+    // Free the permutation handle
+    suites.HandleSuite1()->host_dispose_handle(permutationHandle);
 
     // Process the entire image (operates on all slices in a single pass)
     if (PF_WORLD_IS_DEEP(inputP)) {
