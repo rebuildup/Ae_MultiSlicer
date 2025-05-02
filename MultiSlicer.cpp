@@ -126,7 +126,7 @@ ParamsSetup(
     PF_ADD_SLIDER(STR(StrID_Slices_Param_Name),
         1,
         1000,
-        1,
+        10,
         50,
         1,
         SLICES_DISK_ID);
