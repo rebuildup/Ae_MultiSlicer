@@ -158,53 +158,8 @@ static float GetRandomValue(A_long seed, A_long index) {
     return result;
 }
 
-// Rotate a point around another point
-static void RotatePoint(
-    float centerX, float centerY,
-    float& x, float& y,
-    float angleCos, float angleSin)
-{
-    float dx = x - centerX;
-    float dy = y - centerY;
 
-    // Rotate the point
-    float newX = dx * angleCos - dy * angleSin + centerX;
-    float newY = dx * angleSin + dy * angleCos + centerY;
 
-    x = newX;
-    y = newY;
-}
-
-// Determine if a point is inside a visible portion of a slice
-static bool IsPointInSlice(
-    float x, float y,
-    const SliceInfo* sliceInfoP)
-{
-    // Rotate point to slice space
-    float rotatedX = x;
-    float rotatedY = y;
-
-    RotatePoint(sliceInfoP->centerX, sliceInfoP->centerY,
-        rotatedX, rotatedY,
-        sliceInfoP->angleCos, -sliceInfoP->angleSin);
-
-    // Calculate the center of the slice
-    float sliceCenter = sliceInfoP->sliceStart + (sliceInfoP->sliceWidth / 2.0f);
-
-    // Calculate the half-width of the visible portion
-    // This is always proportional to the Width parameter
-    float halfVisibleWidth = (sliceInfoP->sliceWidth / 2.0f) * sliceInfoP->widthScale;
-
-    // Calculate visible boundaries from the center
-    float leftVisible = sliceCenter - halfVisibleWidth;
-    float rightVisible = sliceCenter + halfVisibleWidth;
-
-    // Check if the point is inside the visible region
-    // Use a much smaller epsilon to avoid precision issues
-    const float epsilon = 0.0001f;
-
-    return (rotatedX >= leftVisible - epsilon && rotatedX <= rightVisible + epsilon);
-}
 // Get pixel color from the source at given coordinates with bounds checking
 static PF_Pixel GetSourcePixel(
     float srcX, float srcY,
@@ -248,6 +203,21 @@ static PF_Pixel16 GetSourcePixel16(
 
     return result;
 }
+static void RotatePoint(
+    float centerX, float centerY,
+    float& x, float& y,
+    float angleCos, float angleSin)
+{
+    float dx = x - centerX;
+    float dy = y - centerY;
+
+    // Rotate the point
+    float newX = dx * angleCos - dy * angleSin + centerX;
+    float newY = dx * angleSin + dy * angleCos + centerY;
+
+    x = newX;
+    y = newY;
+}
 
 static PF_Err
 ProcessMultiSlice(
@@ -260,10 +230,8 @@ ProcessMultiSlice(
     PF_Err err = PF_Err_NONE;
     SliceInfo* sliceInfosArray = (SliceInfo*)refcon;
 
-    // Handle full width case - don't use a floating-point comparison
-    // Instead, check if we're very close to full width
-    if (sliceInfosArray[0].shiftAmount < 0.001f && sliceInfosArray[0].widthScale >= 0.9999f) {
-        // Full width with no shift - just copy the original pixel
+    // Check if we're in identity mode
+    if (sliceInfosArray[0].shiftAmount < 0.001f && sliceInfosArray[0].widthScale > 0.9999f) {
         *out = *in;
         return err;
     }
@@ -274,31 +242,62 @@ ProcessMultiSlice(
     out->green = 0;
     out->blue = 0;
 
-    // Check if point is inside any slice
+    // Get composition center from first slice
+    float centerX = sliceInfosArray[0].centerX;
+    float centerY = sliceInfosArray[0].centerY;
+    float angleCos = sliceInfosArray[0].angleCos;
+    float angleSin = sliceInfosArray[0].angleSin;
+
+    // FIXED: First rotate the pixel coordinates in the inverse direction
+    // This transforms from world space to slice space
+    float sliceX = x;
+    float sliceY = y;
+    // Use negative angle for inverse rotation
+    RotatePoint(centerX, centerY, sliceX, sliceY, angleCos, -angleSin);
+
+    // Check which slice this pixel belongs to
     for (int i = 0; i < sliceInfosArray[0].numSlices; i++) {
         SliceInfo* currentSlice = &sliceInfosArray[i];
 
-        // Skip slices with effectively zero width
-        if (currentSlice->widthScale <= 0.0001f) continue;
+        // Skip slices with zero width
+        if (currentSlice->widthScale <= 0.001f) continue;
 
-        if (IsPointInSlice(x, y, currentSlice)) {
-            float offsetPixels = currentSlice->shiftAmount * currentSlice->shiftRandomFactor * currentSlice->shiftDirection;
+        // Calculate slice boundaries in horizontal space
+        float sliceCenter = currentSlice->sliceStart + (currentSlice->sliceWidth / 2.0f);
+        float halfVisibleWidth = (currentSlice->sliceWidth / 2.0f) * currentSlice->widthScale;
+        float leftVisible = sliceCenter - halfVisibleWidth;
+        float rightVisible = sliceCenter + halfVisibleWidth;
 
-            // Use consistent perpendicular direction calculation
-            float shiftDirX = currentSlice->angleSin; // perpendicular X component
-            float shiftDirY = -currentSlice->angleCos; // perpendicular Y component
+        // Check if the rotated point is within the horizontal slice
+        const float epsilon = 0.0001f;
+        if (sliceX >= leftVisible - epsilon && sliceX <= rightVisible + epsilon) {
+            // Calculate shift amount
+            float offsetPixels = currentSlice->shiftAmount *
+                currentSlice->shiftRandomFactor *
+                currentSlice->shiftDirection;
+
+            // FIXED: Apply shift in world space, perpendicular to slice angle
+            // First calculate the perpendicular direction in slice space (always vertical)
+            float sliceShiftX = 0.0f;  // No horizontal shift in slice space
+            float sliceShiftY = 1.0f;  // Pure vertical shift in slice space
+
+            // Rotate the shift direction to world space
+            float worldShiftX = sliceShiftX;
+            float worldShiftY = sliceShiftY;
+            // Use positive angle for forward rotation
+            RotatePoint(0, 0, worldShiftX, worldShiftY, angleCos, angleSin);
 
             // Apply the shift to get source pixel coordinates
-            float srcX = x + shiftDirX * offsetPixels;
-            float srcY = y + shiftDirY * offsetPixels;
+            float srcX = x + worldShiftX * offsetPixels;
+            float srcY = y + worldShiftY * offsetPixels;
 
             // Get the source pixel
             PF_Pixel srcPixel = GetSourcePixel(srcX, srcY, currentSlice);
 
-            // Only use this pixel if it's not fully transparent
+            // Use this pixel if it's not fully transparent
             if (srcPixel.alpha > 0) {
                 *out = srcPixel;
-                return err; // Use the first valid slice we find
+                return err;
             }
         }
     }
@@ -318,10 +317,8 @@ ProcessMultiSlice16(
     PF_Err err = PF_Err_NONE;
     SliceInfo* sliceInfosArray = (SliceInfo*)refcon;
 
-    // Handle full width case - don't use a floating-point comparison
-    // Instead, check if we're very close to full width
-    if (sliceInfosArray[0].shiftAmount < 0.001f && sliceInfosArray[0].widthScale >= 0.9999f) {
-        // Full width with no shift - just copy the original pixel
+    // Check if we're in identity mode
+    if (sliceInfosArray[0].shiftAmount < 0.001f && sliceInfosArray[0].widthScale > 0.9999f) {
         *out = *in;
         return err;
     }
@@ -332,31 +329,62 @@ ProcessMultiSlice16(
     out->green = 0;
     out->blue = 0;
 
-    // Check if point is inside any slice
+    // Get composition center from first slice
+    float centerX = sliceInfosArray[0].centerX;
+    float centerY = sliceInfosArray[0].centerY;
+    float angleCos = sliceInfosArray[0].angleCos;
+    float angleSin = sliceInfosArray[0].angleSin;
+
+    // FIXED: First rotate the pixel coordinates in the inverse direction
+    // This transforms from world space to slice space
+    float sliceX = x;
+    float sliceY = y;
+    // Use negative angle for inverse rotation
+    RotatePoint(centerX, centerY, sliceX, sliceY, angleCos, -angleSin);
+
+    // Check which slice this pixel belongs to
     for (int i = 0; i < sliceInfosArray[0].numSlices; i++) {
         SliceInfo* currentSlice = &sliceInfosArray[i];
 
-        // Skip slices with effectively zero width
-        if (currentSlice->widthScale <= 0.0001f) continue;
+        // Skip slices with zero width
+        if (currentSlice->widthScale <= 0.001f) continue;
 
-        if (IsPointInSlice(x, y, currentSlice)) {
-            float offsetPixels = currentSlice->shiftAmount * currentSlice->shiftRandomFactor * currentSlice->shiftDirection;
+        // Calculate slice boundaries in horizontal space
+        float sliceCenter = currentSlice->sliceStart + (currentSlice->sliceWidth / 2.0f);
+        float halfVisibleWidth = (currentSlice->sliceWidth / 2.0f) * currentSlice->widthScale;
+        float leftVisible = sliceCenter - halfVisibleWidth;
+        float rightVisible = sliceCenter + halfVisibleWidth;
 
-            // Use consistent perpendicular direction calculation
-            float shiftDirX = currentSlice->angleSin; // perpendicular X component
-            float shiftDirY = -currentSlice->angleCos; // perpendicular Y component
+        // Check if the rotated point is within the horizontal slice
+        const float epsilon = 0.0001f;
+        if (sliceX >= leftVisible - epsilon && sliceX <= rightVisible + epsilon) {
+            // Calculate shift amount
+            float offsetPixels = currentSlice->shiftAmount *
+                currentSlice->shiftRandomFactor *
+                currentSlice->shiftDirection;
+
+            // FIXED: Apply shift in world space, perpendicular to slice angle
+            // First calculate the perpendicular direction in slice space (always vertical)
+            float sliceShiftX = 0.0f;  // No horizontal shift in slice space
+            float sliceShiftY = 1.0f;  // Pure vertical shift in slice space
+
+            // Rotate the shift direction to world space
+            float worldShiftX = sliceShiftX;
+            float worldShiftY = sliceShiftY;
+            // Use positive angle for forward rotation
+            RotatePoint(0, 0, worldShiftX, worldShiftY, angleCos, angleSin);
 
             // Apply the shift to get source pixel coordinates
-            float srcX = x + shiftDirX * offsetPixels;
-            float srcY = y + shiftDirY * offsetPixels;
+            float srcX = x + worldShiftX * offsetPixels;
+            float srcY = y + worldShiftY * offsetPixels;
 
             // Get the source pixel
             PF_Pixel16 srcPixel = GetSourcePixel16(srcX, srcY, currentSlice);
 
-            // Only use this pixel if it's not fully transparent
+            // Use this pixel if it's not fully transparent
             if (srcPixel.alpha > 0) {
                 *out = srcPixel;
-                return err; // Use the first valid slice we find
+                return err;
             }
         }
     }
@@ -376,27 +404,27 @@ Render(
     PF_EffectWorld* inputP = &params[MULTISLICER_INPUT]->u.ld;
     PF_EffectWorld* outputP = output;
 
-    // Extract parameters with proper bit-shift for angle
+    // Extract parameters
     A_long angle_long = params[MULTISLICER_ANGLE]->u.ad.value >> 16;
     float shiftRaw = params[MULTISLICER_SHIFT]->u.fs_d.value;
     float width = params[MULTISLICER_WIDTH]->u.fs_d.value / 100.0f;
     A_long numSlices = params[MULTISLICER_SLICES]->u.sd.value;
     A_long seed = params[MULTISLICER_SEED]->u.sd.value;
 
-    // Calculate downsampling factors for composition display resolution
+    // Ensure at least 1 slice
+    numSlices = MAX(1, numSlices);
+
+    // Determine shift direction based on sign
+    float shiftDirection = (shiftRaw >= 0) ? 1.0f : -1.0f;
+
+    // Calculate downsampling factors
     float downsize_x = static_cast<float>(in_data->downsample_x.den) / static_cast<float>(in_data->downsample_x.num);
     float downsize_y = static_cast<float>(in_data->downsample_y.den) / static_cast<float>(in_data->downsample_y.num);
-
-    // Adjust shift amount based on composition display resolution
     float resolution_factor = min(downsize_x, downsize_y);
     float shiftAmount = fabsf(shiftRaw) / resolution_factor;
 
-    // Properly define shift direction based on sign of the shift parameter
-    float shiftDirection = (shiftRaw >= 0) ? 1.0f : -1.0f;
-
-    // Fast path for identity case
-    if (shiftAmount < 0.001f && fabsf(width - 1.0f) < 0.001f) {
-        // Just copy the input to output
+    // Fast path for identity or single slice case
+    if ((shiftAmount < 0.001f && fabsf(width - 0.9999f) < 0.0001f) || numSlices <= 1) {
         ERR(suites.WorldTransformSuite1()->copy_hq(
             in_data->effect_ref,
             inputP,
@@ -417,33 +445,27 @@ Render(
     float angleCos = cosf(angleRad);
     float angleSin = sinf(angleRad);
 
-    // Determine slice distribution along the angle
-    float sliceLength = 2.0f * MAX(
-        imageWidth * fabsf(angleCos) + imageHeight * fabsf(angleSin),
-        imageHeight * fabsf(angleCos) + imageWidth * fabsf(angleSin)
-    );
+    // FIXED: Calculate slice length based on the maximum dimension of the composition
+    // This ensures slices are long enough regardless of angle
+    float sliceLength = 2.0f * sqrtf(imageWidth * imageWidth + imageHeight * imageHeight);
 
-    // Create a handle for our slice info array
+    // Create slice info array
     PF_Handle sliceInfosHandle = suites.HandleSuite1()->host_new_handle(numSlices * sizeof(SliceInfo));
     if (!sliceInfosHandle) {
         return PF_Err_OUT_OF_MEMORY;
     }
-
-    // Lock the handle to get a pointer to the memory
     SliceInfo* sliceInfos = *((SliceInfo**)sliceInfosHandle);
     if (!sliceInfos) {
         suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
         return PF_Err_OUT_OF_MEMORY;
     }
 
-    // IMPROVED: Generate a randomized baseline for slicing
-    // First, create a set of dividing points
+    // Create dividing points
     PF_Handle divPointsHandle = suites.HandleSuite1()->host_new_handle((numSlices + 1) * sizeof(float));
     if (!divPointsHandle) {
         suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
         return PF_Err_OUT_OF_MEMORY;
     }
-
     float* divPoints = *((float**)divPointsHandle);
     if (!divPoints) {
         suites.HandleSuite1()->host_dispose_handle(divPointsHandle);
@@ -451,41 +473,84 @@ Render(
         return PF_Err_OUT_OF_MEMORY;
     }
 
-    // Start with boundaries of the total slice area
+    // FIXED: Define slice boundaries in a horizontal orientation
     divPoints[0] = -sliceLength / 2.0f;
     divPoints[numSlices] = sliceLength / 2.0f;
 
-    // Generate a random value for the baseline offset
-    float baselineOffset = (GetRandomValue(seed, 12345) - 0.5f) * sliceLength * 0.2f;
+    // Generate a baseline offset
+    float baselineOffset = (GetRandomValue(seed, 12345) - 0.5f) * sliceLength * 0.1f;
+    float avgSpacing = sliceLength / numSlices;
 
-    // Generate division points between slices with random spacing
-    // First, generate uniform divisions
-    float equalSpacing = sliceLength / numSlices;
+    if (numSlices > 1) {
+        // Generate initial division points
+        for (A_long i = 1; i < numSlices; i++) {
+            divPoints[i] = divPoints[0] + (i * avgSpacing);
+        }
 
-    // Then add randomization to these divisions
-    for (A_long i = 1; i < numSlices; i++) {
-        // Calculate position as if uniform
-        float uniformPos = divPoints[0] + (i * equalSpacing);
+        // Add randomization for varied slice widths
+        for (A_long i = 1; i < numSlices; i++) {
+            float baseRandom = GetRandomValue(seed, i * 3779 + 2971);
 
-        // Add randomization - more pronounced for higher values of numSlices
-        float randomFactor = 0.6f - (0.4f * i / numSlices); // Higher slices get less randomization
-        float randomOffset = (GetRandomValue(seed, i * 3779 + 1259) - 0.5f) * equalSpacing * randomFactor;
+            // Create a mix of small and large slices
+            float randomFactor;
+            if (baseRandom < 0.7f) {
+                // Smaller slice (0.2 to 0.9 of normal size)
+                randomFactor = 0.2f + (baseRandom / 0.7f) * 0.7f;
+            }
+            else {
+                // Larger slice (1.0 to 1.8 of normal size)
+                randomFactor = 1.0f + ((baseRandom - 0.7f) / 0.3f) * 0.8f;
+            }
 
-        // Set the division point with randomization and global offset
-        divPoints[i] = uniformPos + randomOffset + baselineOffset;
-    }
+            // Apply randomization
+            float offset = (randomFactor - 1.0f) * avgSpacing;
+            divPoints[i] += offset + baselineOffset;
+        }
 
-    // Ensure divisions are strictly increasing
-    for (A_long i = 1; i < numSlices; i++) {
-        if (divPoints[i] <= divPoints[i - 1] + (equalSpacing * 0.15f)) { // Minimum 15% of equal spacing
-            divPoints[i] = divPoints[i - 1] + (equalSpacing * 0.15f);
+        // Sort points to ensure they're strictly increasing
+        for (A_long i = 1; i < numSlices; i++) {
+            float key = divPoints[i];
+            A_long j = i - 1;
+
+            while (j >= 0 && divPoints[j] > key) {
+                divPoints[j + 1] = divPoints[j];
+                j--;
+            }
+
+            divPoints[j + 1] = key;
+        }
+
+        // Ensure minimum spacing
+        float minSpacing = avgSpacing * 0.05f;
+        for (A_long i = 1; i < numSlices; i++) {
+            if (divPoints[i] < divPoints[i - 1] + minSpacing) {
+                divPoints[i] = divPoints[i - 1] + minSpacing;
+            }
+        }
+
+        // Normalize to full range
+        if (divPoints[numSlices - 1] < divPoints[numSlices] - minSpacing) {
+            float actualRange = divPoints[numSlices - 1] - divPoints[0];
+            float targetRange = divPoints[numSlices] - divPoints[0];
+
+            if (actualRange > 0.001f) {
+                for (A_long i = 1; i < numSlices; i++) {
+                    float relativePos = (divPoints[i] - divPoints[0]) / actualRange;
+                    divPoints[i] = divPoints[0] + relativePos * targetRange;
+                }
+            }
+            else {
+                // Distribute evenly if range is too small
+                for (A_long i = 1; i < numSlices; i++) {
+                    divPoints[i] = divPoints[0] + (i * targetRange / numSlices);
+                }
+            }
         }
     }
 
-
-    // Fill the array with slice information
+    // Fill slice info array
     for (A_long i = 0; i < numSlices; i++) {
-        // Basic information common to all slices
+        // Basic information
         sliceInfos[i].srcData = inputP->data;
         sliceInfos[i].rowbytes = inputP->rowbytes;
         sliceInfos[i].width = imageWidth;
@@ -495,57 +560,51 @@ Render(
         sliceInfos[i].angleCos = angleCos;
         sliceInfos[i].angleSin = angleSin;
         sliceInfos[i].numSlices = numSlices;
-
-        // Apply width scaling linearly with no special cases or branches
         sliceInfos[i].widthScale = width;
         sliceInfos[i].shiftAmount = shiftAmount;
 
-        // Set slice position properties from our division points
-        float sliceStart = divPoints[i];
-        float sliceWidth = divPoints[i + 1] - divPoints[i];
+        // Set slice properties
+        sliceInfos[i].sliceStart = divPoints[i];
+        sliceInfos[i].sliceWidth = divPoints[i + 1] - divPoints[i];
 
-        sliceInfos[i].sliceStart = sliceStart;
-        sliceInfos[i].sliceWidth = sliceWidth;
-
-        // Apply randomization to shift properties as before
+        // Random shift properties
         A_long dirSeed = (seed * 17 + i * 31) & 0x7FFF;
         A_long factorSeed = (seed * 23 + i * 41) & 0x7FFF;
-
         float randomDir = (GetRandomValue(dirSeed, 0) > 0.5f) ? 1.0f : -1.0f;
-        float randomShiftFactor = 0.5f + GetRandomValue(factorSeed, 0) * 1.0f;
+        float randomShiftFactor = 0.5f + GetRandomValue(factorSeed, 0) * 1.5f;
 
         sliceInfos[i].shiftDirection = shiftDirection * randomDir;
         sliceInfos[i].shiftRandomFactor = randomShiftFactor;
     }
 
-    // Free the division points handle
+    // Free division points
     suites.HandleSuite1()->host_dispose_handle(divPointsHandle);
 
-    // Process the entire image (operates on all slices in a single pass)
+    // Process the image
     if (PF_WORLD_IS_DEEP(inputP)) {
         ERR(suites.Iterate16Suite1()->iterate(
             in_data,
-            0,                  // progress base
-            imageHeight,        // progress final
-            inputP,             // src
-            NULL,               // area - null for all pixels
-            (void*)sliceInfos,  // refcon - our slices array
-            ProcessMultiSlice16,// pixel function
-            outputP));          // dest
+            0,
+            imageHeight,
+            inputP,
+            NULL,
+            (void*)sliceInfos,
+            ProcessMultiSlice16,
+            outputP));
     }
     else {
         ERR(suites.Iterate8Suite1()->iterate(
             in_data,
-            0,                  // progress base
-            imageHeight,        // progress final
-            inputP,             // src
-            NULL,               // area - null for all pixels
-            (void*)sliceInfos,  // refcon - our slices array
-            ProcessMultiSlice,  // pixel function
-            outputP));          // dest
+            0,
+            imageHeight,
+            inputP,
+            NULL,
+            (void*)sliceInfos,
+            ProcessMultiSlice,
+            outputP));
     }
 
-    // Free the SliceInfo array
+    // Free slice info array
     suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
 
     return err;
@@ -566,7 +625,7 @@ PF_Err PluginDataEntryFunction2(
         inPluginDataCallBackPtr,
         "MultiSlicer", // Name
         "ADBE MultiSlicer", // Match Name
-        "Sample Plug-ins", // Category
+        "MultiSlicer", // Category
         AE_RESERVED_INFO, // Reserved Info
         "EffectMain", // Entry point
         "https://www.adobe.com"); // support URL
