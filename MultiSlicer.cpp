@@ -176,7 +176,6 @@ static void RotatePoint(
     y = newY;
 }
 
-// Returns whether the point (x,y) is inside the specified slice
 static bool IsPointInSlice(
     float x, float y,
     const SliceInfo* sliceInfoP)
@@ -189,19 +188,23 @@ static bool IsPointInSlice(
         rotatedX, rotatedY,
         sliceInfoP->angleCos, -sliceInfoP->angleSin);
 
-    // Calculate the center of the slice
+    // Calculate slice position and effective width
     float sliceCenter = sliceInfoP->sliceStart + sliceInfoP->sliceWidth / 2.0f;
+    float effectiveWidth = sliceInfoP->sliceWidth * sliceInfoP->widthScale;
 
-    // Calculate distance from the center of the slice
+    // Distance from slice center along the slicing direction
     float distFromCenter = fabsf(rotatedX - sliceCenter);
 
-    // Calculate the maximum allowable distance based on scaled width
-    float maxDist = (sliceInfoP->sliceWidth / 2.0f) * sliceInfoP->widthScale;
+    // IMPROVED: Use half the effective width as maximum distance
+    // This ensures consistent behavior when width changes
+    float maxDist = effectiveWidth / 2.0f;
 
-    // Return true if the point is within the slice
-    return (distFromCenter <= maxDist);
+    // A small epsilon to help with precision issues at width boundaries
+    float epsilon = 0.001f;
+
+    // Return true if point is within the slice (with epsilon tolerance)
+    return (distFromCenter <= maxDist + epsilon);
 }
-
 // Get pixel color from the source at given coordinates with bounds checking
 static PF_Pixel GetSourcePixel(
     float srcX, float srcY,
@@ -280,13 +283,16 @@ ProcessMultiSlice(
         if (currentSlice->widthScale <= 0.001f) continue;
 
         if (IsPointInSlice(x, y, currentSlice)) {
-            // Calculate the shift amount in pixels using the randomized shift multiplier
             float offsetPixels = currentSlice->shiftAmount * currentSlice->shiftRandomFactor * currentSlice->shiftDirection;
 
-            // FIX: Fixed direction calculation to use perpendicular direction
-            // Matching the perpendicular direction in Skeleton.cpp (-sin(angle), cos(angle))
-            float srcX = x + currentSlice->angleSin * offsetPixels;
-            float srcY = y - currentSlice->angleCos * offsetPixels;
+            // IMPROVED: Use consistent perpendicular direction calculation
+            // This ensures the shift direction is always perpendicular to the slice angle
+            float shiftDirX = currentSlice->angleSin; // perpendicular X component
+            float shiftDirY = -currentSlice->angleCos; // perpendicular Y component
+
+            // Apply the shift to get source pixel coordinates
+            float srcX = x + shiftDirX * offsetPixels;
+            float srcY = y + shiftDirY * offsetPixels;
 
             // Get the source pixel
             PF_Pixel srcPixel = GetSourcePixel(srcX, srcY, currentSlice);
@@ -337,15 +343,16 @@ ProcessMultiSlice16(
         if (currentSlice->widthScale <= 0.001f) continue;
 
         if (IsPointInSlice(x, y, currentSlice)) {
-            // Calculate the shift amount in pixels using the randomized shift multiplier
             float offsetPixels = currentSlice->shiftAmount * currentSlice->shiftRandomFactor * currentSlice->shiftDirection;
 
-            // FIX: Fixed direction calculation to use perpendicular direction
-            // Matching the perpendicular direction in Skeleton.cpp (-sin(angle), cos(angle))
-            float srcX = x + currentSlice->angleSin * offsetPixels;
-            float srcY = y - currentSlice->angleCos * offsetPixels;
+            // IMPROVED: Use consistent perpendicular direction calculation
+            // This ensures the shift direction is always perpendicular to the slice angle
+            float shiftDirX = currentSlice->angleSin; // perpendicular X component
+            float shiftDirY = -currentSlice->angleCos; // perpendicular Y component
 
-            // Get the source pixel
+            // Apply the shift to get source pixel coordinates
+            float srcX = x + shiftDirX * offsetPixels;
+            float srcY = y + shiftDirY * offsetPixels;
             PF_Pixel16 srcPixel = GetSourcePixel16(srcX, srcY, currentSlice);
 
             // Only use this pixel if it's not fully transparent
@@ -443,41 +450,8 @@ Render(
         return PF_Err_OUT_OF_MEMORY;
     }
 
-    // Special case handling for Width = 100%
-    bool perfectTiling = (width > 0.999f);
-
-    // NEW: Create a permutation of slice indices based on seed
-    // This will allow non-linear distribution of slices
-    PF_Handle permutationHandle = suites.HandleSuite1()->host_new_handle(numSlices * sizeof(A_long));
-    if (!permutationHandle) {
-        suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
-        return PF_Err_OUT_OF_MEMORY;
-    }
-
-    A_long* permutation = *((A_long**)permutationHandle);
-    if (!permutation) {
-        suites.HandleSuite1()->host_dispose_handle(permutationHandle);
-        suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
-        return PF_Err_OUT_OF_MEMORY;
-    }
-
-    // Initialize permutation
-    for (A_long i = 0; i < numSlices; i++) {
-        permutation[i] = i;
-    }
-
-    // NEW: Simple shuffle algorithm based on seed
-    // Only if not in perfect tiling mode
-    if (!perfectTiling) {
-        for (A_long i = numSlices - 1; i > 0; i--) {
-            A_long j = (A_long)(GetRandomValue(seed, i) * (i + 1));
-            if (j > i) j = i;
-            // Swap i and j
-            A_long temp = permutation[i];
-            permutation[i] = permutation[j];
-            permutation[j] = temp;
-        }
-    }
+    // Use a continuous approach for all width values
+    bool useRandomization = (width < 0.999f);
 
     // Fill the array with slice information
     for (A_long i = 0; i < numSlices; i++) {
@@ -494,41 +468,42 @@ Render(
         sliceInfos[i].widthScale = width;
         sliceInfos[i].shiftAmount = shiftAmount;
 
-        float randomWidth, randomPos;
+        // IMPROVED: Use consistent slice positioning logic for all width values
+        // Base position - always maintain consistent linear ordering
+        float baseOffset = i * sliceSpacing;
 
-        if (perfectTiling) {
-            // For perfect tiling (Width = 100%), ensure exact alignment
-            randomPos = 0.0f;
-            randomWidth = 1.0f;
+        // Add global offset (consistent for all slices)
+        float sliceOffset = baseOffset + globalOffset;
 
-            // Set slice properties with global offset but no individual randomization
-            sliceInfos[i].sliceStart = -sliceLength / 2.0f + i * sliceSpacing + globalOffset;
-            sliceInfos[i].sliceWidth = sliceSpacing;
-        }
-        else {
-            // Use permutation to create more varied patterns
-            A_long permutedIndex = permutation[i];
+        // Apply randomization ONLY to affect the visual width, not the position
+        // This ensures slice positions stay consistent even when width changes
+        float randomWidth = 1.0f;
 
-            // Original randomization for width < 100%
-            randomPos = (GetRandomValue(seed, i + numSlices * 3) - 0.5f) * 0.3f; // -0.15 to 0.15
-            randomWidth = GetRandomValue(seed, i) * 0.5f + 0.75f;   // 0.75 to 1.25
-
-            // Set slice properties with randomization and global offset
-            sliceInfos[i].sliceStart = -sliceLength / 2.0f + permutedIndex * sliceSpacing +
-                randomPos * sliceSpacing + globalOffset;
-            sliceInfos[i].sliceWidth = sliceSpacing * randomWidth;
+        if (useRandomization) {
+            // Use a stable seed-based random value for consistent randomization
+            // that scales with the width parameter (less randomness at lower widths)
+            float randomFactor = width * 0.25f; // Max 25% variation at width=100%
+            randomWidth = 1.0f + (GetRandomValue(seed, i * 1000 + 333) - 0.5f) * randomFactor;
         }
 
-        // Random direction and shift factor remain the same
-        float randomDir = (GetRandomValue(seed, i + numSlices) > 0.5f) ? 1.0f : -1.0f;
-        float randomShiftFactor = GetRandomValue(seed, i + numSlices * 4) * 2.0f + 0.5f;
+        // Set slice properties with consistent positioning
+        sliceInfos[i].sliceStart = -sliceLength / 2.0f + sliceOffset;
+        sliceInfos[i].sliceWidth = sliceSpacing * randomWidth;
+
+        // Create consistent random direction and shift factors
+        // Use smaller seeds to avoid potential overflow issues
+        A_long dirSeed = (seed * 17 + i * 31) & 0x7FFF;
+        A_long factorSeed = (seed * 23 + i * 41) & 0x7FFF;
+
+        // Generate deterministic random values
+        float randomDir = (GetRandomValue(dirSeed, 0) > 0.5f) ? 1.0f : -1.0f;
+
+        // Scale the randomShiftFactor more moderately to avoid extreme shifts
+        float randomShiftFactor = 0.75f + GetRandomValue(factorSeed, 0) * 1.5f; // Range 0.75-2.25
 
         sliceInfos[i].shiftDirection = shiftDirection * randomDir;
         sliceInfos[i].shiftRandomFactor = randomShiftFactor;
     }
-
-    // Free the permutation handle
-    suites.HandleSuite1()->host_dispose_handle(permutationHandle);
 
     // Process the entire image (operates on all slices in a single pass)
     if (PF_WORLD_IS_DEEP(inputP)) {
