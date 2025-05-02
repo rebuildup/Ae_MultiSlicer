@@ -628,7 +628,7 @@ PF_Err PluginDataEntryFunction2(
         "MultiSlicer", // Category
         AE_RESERVED_INFO, // Reserved Info
         "EffectMain", // Entry point
-        "https://www.adobe.com"); // support URL
+        "https://github.com/rebuildup/Ae_MultiSlicer"); // support URL
 
     return result;
 }

@@ -17,7 +17,7 @@ resource 'PiPL' (16000) {
 		},
 		/* [3] */
 		Category {
-			"Sample Plug-ins"
+			"MultiSlicer"
 		},
 #ifdef AE_OS_WIN
 	#ifdef AE_PROC_INTELx64
@@ -64,7 +64,7 @@ resource 'PiPL' (16000) {
 		},
 		/* [13] */
 		AE_Effect_Support_URL {
-			"https://www.adobe.com"
+			"https://github.com/rebuildup/Ae_MultiSlicer"
 		}
 	}
 };

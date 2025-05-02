@@ -22,8 +22,8 @@ BEGIN
 	"MIB8",
 	"gtac", 
 	0, 0x0,
-	16, 0x0,
-	"\x0FSample Plug-ins", 
+	12, 0x0,
+	"\x0BMultiSlicer", 
 
 	"MIB8",
 	"4668", 
@@ -82,8 +82,8 @@ BEGIN
 	"MIB8",
 	"LRUe",
 	0, 0x0,
-	24, 0x0,
-	"\x15https://www.adobe.com\0\0", 
+	44, 0x0,
+	"\x2Bhttps://github.com/rebuildup/Ae_MultiSlicer", 
 
 
 END
