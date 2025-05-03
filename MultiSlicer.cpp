@@ -634,7 +634,7 @@ PF_Err PluginDataEntryFunction2(
 }
 
 
-PF_Err
+extern "C" DllExport PF_Err
 EffectMain(
     PF_Cmd          cmd,
     PF_InData* in_data,
