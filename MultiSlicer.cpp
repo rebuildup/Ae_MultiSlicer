@@ -1,5 +1,6 @@
 ﻿#include "MultiSlicer.h"
 
+#define NOMINMAX
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -25,10 +26,10 @@ static inline T Clamp(T val, T minVal, T maxVal) {
 // -----------------------------------------------------------------------------
 
 template <typename PixelT>
-struct PixelTraits;
+struct MultiSlicerPixelTraits;
 
 template <>
-struct PixelTraits<PF_Pixel> {
+struct MultiSlicerPixelTraits<PF_Pixel> {
     using ChannelType = A_u_char;
     static constexpr float MAX_VAL = 255.0f;
     static inline float ToFloat(ChannelType v) { return static_cast<float>(v); }
@@ -36,7 +37,7 @@ struct PixelTraits<PF_Pixel> {
 };
 
 template <>
-struct PixelTraits<PF_Pixel16> {
+struct MultiSlicerPixelTraits<PF_Pixel16> {
     using ChannelType = A_u_short;
     static constexpr float MAX_VAL = 32768.0f;
     static inline float ToFloat(ChannelType v) { return static_cast<float>(v); }
@@ -44,7 +45,7 @@ struct PixelTraits<PF_Pixel16> {
 };
 
 template <>
-struct PixelTraits<PF_PixelFloat> {
+struct MultiSlicerPixelTraits<PF_PixelFloat> {
     using ChannelType = PF_FpShort;
     static inline float ToFloat(ChannelType v) { return static_cast<float>(v); }
     static inline ChannelType FromFloat(float v) { return static_cast<ChannelType>(v); }
@@ -95,14 +96,14 @@ static inline Pixel SampleBilinear(const A_u_char *base_ptr,
     auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
 
     Pixel result;
-    result.alpha = PixelTraits<Pixel>::FromFloat(lerp(lerp(PixelTraits<Pixel>::ToFloat(p00.alpha), PixelTraits<Pixel>::ToFloat(p10.alpha), tx),
-                                                      lerp(PixelTraits<Pixel>::ToFloat(p01.alpha), PixelTraits<Pixel>::ToFloat(p11.alpha), tx), ty));
-    result.red = PixelTraits<Pixel>::FromFloat(lerp(lerp(PixelTraits<Pixel>::ToFloat(p00.red), PixelTraits<Pixel>::ToFloat(p10.red), tx),
-                                                    lerp(PixelTraits<Pixel>::ToFloat(p01.red), PixelTraits<Pixel>::ToFloat(p11.red), tx), ty));
-    result.green = PixelTraits<Pixel>::FromFloat(lerp(lerp(PixelTraits<Pixel>::ToFloat(p00.green), PixelTraits<Pixel>::ToFloat(p10.green), tx),
-                                                      lerp(PixelTraits<Pixel>::ToFloat(p01.green), PixelTraits<Pixel>::ToFloat(p11.green), tx), ty));
-    result.blue = PixelTraits<Pixel>::FromFloat(lerp(lerp(PixelTraits<Pixel>::ToFloat(p00.blue), PixelTraits<Pixel>::ToFloat(p10.blue), tx),
-                                                     lerp(PixelTraits<Pixel>::ToFloat(p01.blue), PixelTraits<Pixel>::ToFloat(p11.blue), tx), ty));
+    result.alpha = MultiSlicerPixelTraits<Pixel>::FromFloat(lerp(lerp(MultiSlicerPixelTraits<Pixel>::ToFloat(p00.alpha), MultiSlicerPixelTraits<Pixel>::ToFloat(p10.alpha), tx),
+                                                      lerp(MultiSlicerPixelTraits<Pixel>::ToFloat(p01.alpha), MultiSlicerPixelTraits<Pixel>::ToFloat(p11.alpha), tx), ty));
+    result.red = MultiSlicerPixelTraits<Pixel>::FromFloat(lerp(lerp(MultiSlicerPixelTraits<Pixel>::ToFloat(p00.red), MultiSlicerPixelTraits<Pixel>::ToFloat(p10.red), tx),
+                                                    lerp(MultiSlicerPixelTraits<Pixel>::ToFloat(p01.red), MultiSlicerPixelTraits<Pixel>::ToFloat(p11.red), tx), ty));
+    result.green = MultiSlicerPixelTraits<Pixel>::FromFloat(lerp(lerp(MultiSlicerPixelTraits<Pixel>::ToFloat(p00.green), MultiSlicerPixelTraits<Pixel>::ToFloat(p10.green), tx),
+                                                      lerp(MultiSlicerPixelTraits<Pixel>::ToFloat(p01.green), MultiSlicerPixelTraits<Pixel>::ToFloat(p11.green), tx), ty));
+    result.blue = MultiSlicerPixelTraits<Pixel>::FromFloat(lerp(lerp(MultiSlicerPixelTraits<Pixel>::ToFloat(p00.blue), MultiSlicerPixelTraits<Pixel>::ToFloat(p10.blue), tx),
+                                                     lerp(MultiSlicerPixelTraits<Pixel>::ToFloat(p01.blue), MultiSlicerPixelTraits<Pixel>::ToFloat(p11.blue), tx), ty));
     return result;
 }
 
