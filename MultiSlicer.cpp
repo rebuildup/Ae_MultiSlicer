@@ -89,13 +89,7 @@ ParamsSetup(
 
     AEFX_CLR_STRUCT(def);
 
-    // Angle parameter - determines the direction of slicing
-    PF_ADD_ANGLE(STR(StrID_Angle_Param_Name),
-        MULTISLICER_ANGLE_DFLT,
-        ANGLE_DISK_ID);
-
     // Shift parameter - controls how much the slices move, in pixels
-    AEFX_CLR_STRUCT(def);
     PF_ADD_FLOAT_SLIDERX(STR(StrID_Shift_Param_Name),
         -10000,
         10000,
@@ -115,7 +109,7 @@ ParamsSetup(
         0,
         100,
         100,
-        PF_Precision_TENTHS,  // Use TENTHS for decimal precision
+        PF_Precision_TENTHS,
         0,
         0,
         WIDTH_DISK_ID);
@@ -129,6 +123,20 @@ ParamsSetup(
         50,
         10,
         SLICES_DISK_ID);
+
+    // Anchor Point - center point for rotation
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_POINT("Anchor Point",
+        MULTISLICER_ANCHOR_X_DFLT,
+        MULTISLICER_ANCHOR_Y_DFLT,
+        FALSE,
+        ANCHOR_POINT_DISK_ID);
+
+    // Angle parameter - determines the direction of slicing
+    AEFX_CLR_STRUCT(def);
+    PF_ADD_ANGLE(STR(StrID_Angle_Param_Name),
+        MULTISLICER_ANGLE_DFLT,
+        ANGLE_DISK_ID);
 
     // Seed for randomness
     AEFX_CLR_STRUCT(def);
@@ -405,10 +413,12 @@ Render(
     PF_EffectWorld* outputP = output;
 
     // Extract parameters
-    A_long angle_long = params[MULTISLICER_ANGLE]->u.ad.value >> 16;
     float shiftRaw = params[MULTISLICER_SHIFT]->u.fs_d.value;
     float width = params[MULTISLICER_WIDTH]->u.fs_d.value / 100.0f;
     A_long numSlices = params[MULTISLICER_SLICES]->u.sd.value;
+    PF_Fixed anchor_x = params[MULTISLICER_ANCHOR_POINT]->u.td.x_value;
+    PF_Fixed anchor_y = params[MULTISLICER_ANCHOR_POINT]->u.td.y_value;
+    A_long angle_long = params[MULTISLICER_ANGLE]->u.ad.value >> 16;
     A_long seed = params[MULTISLICER_SEED]->u.sd.value;
 
     // Ensure at least 1 slice
@@ -437,8 +447,10 @@ Render(
     // Get image dimensions
     A_long imageWidth = inputP->width;
     A_long imageHeight = inputP->height;
-    A_long centerX = imageWidth / 2;
-    A_long centerY = imageHeight / 2;
+    
+    // Convert anchor point from percentage to pixel coordinates
+    A_long centerX = (A_long)((anchor_x * imageWidth) / (100 << 16));
+    A_long centerY = (A_long)((anchor_y * imageHeight) / (100 << 16));
 
     // Calculate angle in radians
     float angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
