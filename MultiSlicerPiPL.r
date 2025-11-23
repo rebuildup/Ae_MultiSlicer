@@ -17,7 +17,7 @@ resource 'PiPL' (16000) {
 		},
 		/* [3] */
 		Category {
-			"MultiSlicer"
+			"361do_plugins"
 		},
 #ifdef AE_OS_WIN
 	#ifdef AE_PROC_INTELx64
@@ -42,24 +42,6 @@ resource 'PiPL' (16000) {
 		/* [8] */
 		AE_Effect_Version {
 			0x00080001 /* Must match version in GlobalSetup */
-		},
-		/* [9] */
-		AE_Effect_Info_Flags {
-			0
-		},
-		/* [10] */
-		AE_Effect_Global_OutFlags {
-			0x06000400 /* Matches the out_flags in GlobalSetup */
-		},
-		AE_Effect_Global_OutFlags_2 {
-			0x08000000 /* PF_OutFlag2_SUPPORTS_THREADED_RENDERING */
-		},
-		/* [11] */
-		AE_Effect_Match_Name {
-			"ADBE MultiSlicer"
-		},
-		/* [12] */
-		AE_Reserved_Info {
 			0
 		},
 		/* [13] */

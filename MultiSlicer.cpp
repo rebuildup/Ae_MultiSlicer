@@ -304,64 +304,94 @@ GlobalSetup(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_
 {
     out_data->my_version = PF_VERSION(MAJOR_VERSION, MINOR_VERSION, BUG_VERSION, STAGE_VERSION, BUILD_VERSION);
     out_data->out_flags = PF_OutFlag_DEEP_COLOR_AWARE | PF_OutFlag_PIX_INDEPENDENT;
-    out_data->out_flags2 = PF_OutFlag2_FLOAT_COLOR_AWARE | PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
+    out_data->out_flags2 = PF_OutFlag2_FLOAT_COLOR_AWARE | PF_OutFlag2_SUPPORTS_SMART_RENDER | PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
     return PF_Err_NONE;
 }
 
 static PF_Err
-ParamsSetup(PF_InData* in_data, PF_OutData* out_data, PF_ParamDef* params[], PF_LayerDef* output)
+PreRender(
+    PF_InData* in_data,
+    PF_OutData* out_data,
+    PF_PreRenderExtra* extra)
 {
     PF_Err err = PF_Err_NONE;
-    PF_ParamDef def;
+    PF_RenderRequest req = extra->input->output_request;
+    PF_CheckoutResult in_result;
 
-    AEFX_CLR_STRUCT(def);
+    // Checkout input
+    ERR(extra->cb->checkout_layer(in_data->effect_ref,
+        MULTISLICER_INPUT,
+        MULTISLICER_INPUT,
+        &req,
+        in_data->current_time,
+        in_data->time_step,
+        in_data->time_scale,
+        &in_result));
 
-    PF_ADD_ANGLE("Angle", MULTISLICER_ANGLE_DFLT, MULTISLICER_ANGLE);
+    // Set result rects
+    if (!err) {
+        UnionLRect(&in_result.result_rect, &extra->output->result_rect);
+        UnionLRect(&in_result.max_result_rect, &extra->output->max_result_rect);
+    }
 
-    PF_ADD_FLOAT_SLIDERX(
-        "Shift Amount",
-        MULTISLICER_SHIFT_MIN,
-        MULTISLICER_SHIFT_MAX,
-        MULTISLICER_SHIFT_MIN,
-        MULTISLICER_SHIFT_MAX,
-        MULTISLICER_SHIFT_DFLT,
-        PF_Precision_INTEGER,
-        0,
-        0,
-        MULTISLICER_SHIFT);
+    return err;
+}
 
-    PF_ADD_FLOAT_SLIDERX(
-        "Slice Width Randomness",
-        MULTISLICER_WIDTH_MIN,
-        MULTISLICER_WIDTH_MAX,
-        MULTISLICER_WIDTH_MIN,
-        MULTISLICER_WIDTH_MAX,
-        MULTISLICER_WIDTH_DFLT,
-        PF_Precision_INTEGER,
-        0,
-        0,
-        MULTISLICER_WIDTH);
+static PF_Err
+SmartRender(
+    PF_InData* in_data,
+    PF_OutData* out_data,
+    PF_SmartRenderExtra* extra)
+{
+    PF_Err err = PF_Err_NONE;
+    PF_EffectWorld* input_world = NULL;
+    PF_EffectWorld* output_world = NULL;
+    PF_WorldSuite2* wsP = NULL;
 
-    PF_ADD_SLIDER(
-        "Number of Slices",
-        MULTISLICER_SLICES_MIN,
-        MULTISLICER_SLICES_MAX,
-        MULTISLICER_SLICES_MIN,
-        MULTISLICER_SLICES_MAX,
-        MULTISLICER_SLICES_DFLT,
-        MULTISLICER_SLICES);
+    // Get World Suite
+    ERR(AEFX_AcquireSuite(in_data, out_data, kPFWorldSuite, kPFWorldSuiteVersion2, "PFWorldSuite", (void**)&wsP));
 
-    PF_ADD_SLIDER(
-        "Random Seed",
-        MULTISLICER_SEED_MIN,
-        MULTISLICER_SEED_MAX,
-        MULTISLICER_SEED_MIN,
-        MULTISLICER_SEED_MAX,
-        MULTISLICER_SEED_DFLT,
-        MULTISLICER_SEED);
+    if (!err) {
+        // Checkout input/output
+        ERR((extra->cb->checkout_layer_pixels(in_data->effect_ref, MULTISLICER_INPUT, &input_world)));
+        ERR(extra->cb->checkout_output(in_data->effect_ref, &output_world));
+    }
 
-    out_data->num_params = MULTISLICER_NUM_PARAMS;
-    return PF_Err_NONE;
+    if (!err && input_world && output_world) {
+        // Checkout parameters
+        PF_ParamDef p[MULTISLICER_NUM_PARAMS];
+        PF_ParamDef* pp[MULTISLICER_NUM_PARAMS];
+        
+        // Input
+        AEFX_CLR_STRUCT(p[MULTISLICER_INPUT]);
+        p[MULTISLICER_INPUT].u.ld = *input_world;
+        pp[MULTISLICER_INPUT] = &p[MULTISLICER_INPUT];
+
+        // Params
+        for (int i = 1; i < MULTISLICER_NUM_PARAMS; ++i) {
+            PF_Checkout_Value(in_data, out_data, i, in_data->current_time, in_data->time_step, in_data->time_scale, &p[i]);
+            pp[i] = &p[i];
+        }
+
+        // Call Render
+        int bpp = (output_world->width > 0) ? (output_world->rowbytes / output_world->width) : 0;
+        if (bpp == sizeof(PF_PixelFloat)) {
+            err = RenderGeneric<PF_PixelFloat>(in_data, out_data, pp, output_world);
+        } else if (bpp == sizeof(PF_Pixel16)) {
+            err = RenderGeneric<PF_Pixel16>(in_data, out_data, pp, output_world);
+        } else {
+            err = RenderGeneric<PF_Pixel>(in_data, out_data, pp, output_world);
+        }
+        
+        // Checkin params
+        for (int i = 1; i < MULTISLICER_NUM_PARAMS; ++i) {
+            PF_Checkin_Param(in_data, out_data, i, &p[i]);
+        }
+    }
+    
+    if (wsP) AEFX_ReleaseSuite(in_data, out_data, kPFWorldSuite, kPFWorldSuiteVersion2, "PFWorldSuite");
+
+    return err;
 }
 
 extern "C" DllExport
@@ -376,11 +406,11 @@ PF_Err PluginDataEntryFunction2(PF_PluginDataPtr inPtr,
         inPtr,
         inPluginDataCallBackPtr,
         "MultiSlicer", // Name
-        "MultiSlicer", // Match Name
-        "Ae_Plugins", // Category
+        "361do MultiSlicer", // Match Name
+        "361do_plugins", // Category
         AE_RESERVED_INFO,
         "EffectMain",
-        "https://github.com/rebuildup/MultiSlicer");
+        "https://github.com/rebuildup/Ae_MultiSlicer");
     return result;
 }
 
@@ -399,6 +429,8 @@ PF_Err EffectMain(PF_Cmd cmd,
         case PF_Cmd_GLOBAL_SETUP: err = GlobalSetup(in_data, out_data, params, output); break;
         case PF_Cmd_PARAMS_SETUP: err = ParamsSetup(in_data, out_data, params, output); break;
         case PF_Cmd_RENDER: err = Render(in_data, out_data, params, output); break;
+        case PF_Cmd_SMART_PRE_RENDER: err = PreRender(in_data, out_data, (PF_PreRenderExtra*)extra); break;
+        case PF_Cmd_SMART_RENDER: err = SmartRender(in_data, out_data, (PF_SmartRenderExtra*)extra); break;
         default: break;
         }
     }
