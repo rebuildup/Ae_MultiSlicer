@@ -1,24 +1,3 @@
-/*******************************************************************/
-/*                                                                 */
-/*                      ADOBE CONFIDENTIAL                         */
-/*                   _ _ _ _ _ _ _ _ _ _ _ _ _                     */
-/*                                                                 */
-/* Copyright 2007-2023 Adobe Inc.                                  */
-/* All Rights Reserved.                                            */
-/*                                                                 */
-/* NOTICE:  All information contained herein is, and remains the   */
-/* property of Adobe Inc. and its suppliers, if                    */
-/* any.  The intellectual and technical concepts contained         */
-/* herein are proprietary to Adobe Inc. and its                    */
-/* suppliers and may be covered by U.S. and Foreign Patents,       */
-/* patents in process, and are protected by trade secret or        */
-/* copyright law.  Dissemination of this information or            */
-/* reproduction of this material is strictly forbidden unless      */
-/* prior written permission is obtained from Adobe Inc.            */
-/* Incorporated.                                                   */
-/*                                                                 */
-/*******************************************************************/
-
 #pragma once
 
 #ifndef MULTISLICER_H
@@ -41,6 +20,11 @@
 #include "AE_EffectCBSuites.h"
 #include "String_Utils.h"
 #include "AE_GeneralPlug.h"
+
+/* Define PF_TABLE_BITS before including AEFX_ChannelDepthTpl.h */
+#define PF_TABLE_BITS	12
+#define PF_TABLE_SZ_16	4096
+
 #include "AEFX_ChannelDepthTpl.h"
 #include "AEGP_SuiteHandler.h"
 
@@ -65,24 +49,17 @@
 #define MULTISLICER_SEED_MAX          10000
 #define MULTISLICER_SEED_DFLT         1234
 
-// Macro for math operations
-#define CLAMP(x, min, max) ((x) < (min) ? (min) : ((x) > (max) ? (max) : (x)))
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#define ABS(x) ((x) < 0 ? -(x) : (x))
-
 enum {
     MULTISLICER_INPUT = 0,
-    MULTISLICER_ANGLE,
-    MULTISLICER_SHIFT,
-    MULTISLICER_WIDTH,
-    MULTISLICER_SLICES,
-    MULTISLICER_SEED,
     MULTISLICER_NUM_PARAMS
 };
 
 enum {
-    ANGLE_DISK_ID = 1
+    ANGLE_DISK_ID = 1,
+    SHIFT_DISK_ID,
+    WIDTH_DISK_ID,
+    SLICES_DISK_ID,
+    SEED_DISK_ID
 };
 
 extern "C" {
