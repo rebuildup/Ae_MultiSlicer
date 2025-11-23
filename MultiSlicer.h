@@ -79,27 +79,6 @@ enum {
 
 enum {
     ANGLE_DISK_ID = 1,
-    SHIFT_DISK_ID,
-    WIDTH_DISK_ID,
-    SLICES_DISK_ID,
-    SEED_DISK_ID
-};
-
-// Structure to hold slice information for processing
-typedef struct SliceInfo {
-    void* srcData;          // Source image data
-    A_long    rowbytes;         // Row bytes of source
-    A_long    width;            // Width of source
-    A_long    height;           // Height of source
-    A_long    numSlices;        // Total number of slices
-    float     centerX;          // Center X coordinate
-    float     centerY;          // Center Y coordinate
-    float     angleCos;         // Cosine of angle
-    float     angleSin;         // Sine of angle
-    float     sliceStart;       // Starting position of slice
-    float     sliceWidth;       // Width of this slice
-    float     shiftAmount;      // Raw shift amount in pixels
-    float     shiftDirection;   // Direction of shift (-1 or 1)
     float     shiftRandomFactor;// Random multiplier for shift amount
     float     widthScale;       // Width scale factor (0-1)
 
