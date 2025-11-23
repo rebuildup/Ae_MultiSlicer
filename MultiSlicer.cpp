@@ -73,7 +73,7 @@ GlobalSetup(
     out_data->out_flags |= PF_OutFlag_SEND_UPDATE_PARAMS_UI;
 
     // Enable Multi-Frame Rendering support
-    out_data->out_flags2 = 0x08000000; // PF_OutFlag2_SUPPORTS_THREADED_RENDERING
+    out_data->out_flags2 = PF_OutFlag2_SUPPORTS_SMART_RENDER | PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
 
     return PF_Err_NONE;
 }
