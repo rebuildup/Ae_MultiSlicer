@@ -1,5 +1,9 @@
 ﻿#include "MultiSlicer.h"
 
+#include <vector>
+#include <algorithm>
+#include <cstring>
+
 static PF_Err 
 About (	
 	PF_InData		*in_data,
@@ -227,13 +231,21 @@ EffectMain(
 									output);
 				break;
 				
+			case PF_Cmd_SEQUENCE_SETUP:
+			case PF_Cmd_SEQUENCE_SETDOWN:
+			case PF_Cmd_SEQUENCE_FLATTEN:
+				break;
+				
+			case PF_Cmd_FRAME_SETUP:
+			case PF_Cmd_FRAME_SETDOWN:
+				break;
+				
 			case PF_Cmd_RENDER:
 				err = Render(	in_data,
 								out_data,
 								params,
 								output);
 				break;
-		}
 	}
 	catch(PF_Err &thrown_err){
 		err = thrown_err;
