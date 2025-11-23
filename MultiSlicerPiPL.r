@@ -41,7 +41,25 @@ resource 'PiPL' (16000) {
 		},
 		/* [8] */
 		AE_Effect_Version {
-			0x00080001 /* Must match version in GlobalSetup */
+			525313
+		},
+		/* [9] */
+		AE_Effect_Info_Flags {
+			0
+		},
+		/* [10] */
+		AE_Effect_Global_OutFlags {
+			0x02000000
+		},
+		AE_Effect_Global_OutFlags_2 {
+			0x00000000
+		},
+		/* [11] */
+		AE_Effect_Match_Name {
+			"361do MultiSlicer"
+		},
+		/* [12] */
+		AE_Reserved_Info {
 			0
 		},
 		/* [13] */
