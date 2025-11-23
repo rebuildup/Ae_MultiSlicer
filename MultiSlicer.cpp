@@ -624,8 +624,8 @@ PF_Err PluginDataEntryFunction2(
         inPtr,
         inPluginDataCallBackPtr,
         "MultiSlicer", // Name
-        "ADBE MultiSlicer", // Match Name
-        "MultiSlicer", // Category
+        "361do MultiSlicer", // Match Name
+        "361do_plugins", // Category
         AE_RESERVED_INFO, // Reserved Info
         "EffectMain", // Entry point
         "https://github.com/rebuildup/Ae_MultiSlicer"); // support URL
