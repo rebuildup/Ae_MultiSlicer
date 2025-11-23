@@ -49,6 +49,8 @@
 #define MULTISLICER_SEED_MAX          10000
 #define MULTISLICER_SEED_DFLT         1234
 
+#define MULTISLICER_ANGLE_DFLT        0
+
 enum {
     MULTISLICER_INPUT = 0,
     MULTISLICER_ANGLE,
