@@ -1,6 +1,6 @@
-﻿#include "MultiSlicer.h"
+﻿#define NOMINMAX
+#include "MultiSlicer.h"
 
-#define NOMINMAX
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -47,6 +47,7 @@ struct MultiSlicerPixelTraits<PF_Pixel16> {
 template <>
 struct MultiSlicerPixelTraits<PF_PixelFloat> {
     using ChannelType = PF_FpShort;
+    static constexpr float MAX_VAL = 1.0f;
     static inline float ToFloat(ChannelType v) { return static_cast<float>(v); }
     static inline ChannelType FromFloat(float v) { return static_cast<ChannelType>(v); }
 };
