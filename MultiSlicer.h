@@ -135,6 +135,15 @@ typedef struct SliceInfo {
     float     shiftDirection;   // Direction of shift (-1 or 1)
     float     shiftRandomFactor;// Random multiplier for shift amount
     float     widthScale;       // Width scale factor (0-1)
+
+    // Precomputed values to minimize per-pixel math
+    float     sliceCenter;      // Center position of slice (slice space)
+    float     halfVisibleWidth; // Half of visible width (slice space)
+    float     leftVisible;      // Left bound of visible region (slice space)
+    float     rightVisible;     // Right bound of visible region (slice space)
+    float     offsetPixels;     // Signed per-slice offset in pixels
+    float     worldShiftX;      // X component of world shift direction
+    float     worldShiftY;      // Y component of world shift direction
 } SliceInfo, * SliceInfoP, ** SliceInfoH;
 
 
