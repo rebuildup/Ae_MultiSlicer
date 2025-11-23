@@ -35,6 +35,7 @@
 #include "MultiSlicer.h"
 #include <stdlib.h>
 #include <math.h>
+#include <algorithm>
 
 static PF_Err
 About(
@@ -195,10 +196,10 @@ static PF_Pixel GetSourcePixel(
     float fy = srcY - y0;
     
     // Clamp to image bounds
-    x0 = (std::max)(0L, (std::min)(x0, sliceInfoP->width - 1));
-    x1 = (std::max)(0L, (std::min)(x1, sliceInfoP->width - 1));
-    y0 = (std::max)(0L, (std::min)(y0, sliceInfoP->height - 1));
-    y1 = (std::max)(0L, (std::min)(y1, sliceInfoP->height - 1));
+    x0 = MAX(0L, MIN(x0, sliceInfoP->width - 1));
+    x1 = MAX(0L, MIN(x1, sliceInfoP->width - 1));
+    y0 = MAX(0L, MIN(y0, sliceInfoP->height - 1));
+    y1 = MAX(0L, MIN(y1, sliceInfoP->height - 1));
     
     // Get the four corner pixels
     PF_Pixel* p00 = (PF_Pixel*)((char*)sliceInfoP->srcData + y0 * sliceInfoP->rowbytes + x0 * sizeof(PF_Pixel));
@@ -243,10 +244,10 @@ static PF_Pixel16 GetSourcePixel16(
     float fy = srcY - y0;
     
     // Clamp to image bounds
-    x0 = (std::max)(0L, (std::min)(x0, sliceInfoP->width - 1));
-    x1 = (std::max)(0L, (std::min)(x1, sliceInfoP->width - 1));
-    y0 = (std::max)(0L, (std::min)(y0, sliceInfoP->height - 1));
-    y1 = (std::max)(0L, (std::min)(y1, sliceInfoP->height - 1));
+    x0 = MAX(0L, MIN(x0, sliceInfoP->width - 1));
+    x1 = MAX(0L, MIN(x1, sliceInfoP->width - 1));
+    y0 = MAX(0L, MIN(y0, sliceInfoP->height - 1));
+    y1 = MAX(0L, MIN(y1, sliceInfoP->height - 1));
     
     // Get the four corner pixels
     PF_Pixel16* p00 = (PF_Pixel16*)((char*)sliceInfoP->srcData + y0 * sliceInfoP->rowbytes + x0 * sizeof(PF_Pixel16));
