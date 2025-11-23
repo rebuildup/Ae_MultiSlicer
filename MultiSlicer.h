@@ -36,25 +36,6 @@ typedef short int            int16;
 #define PF_TABLE_BITS    12
 #define PF_TABLE_SZ_16   4096
 
-#define PF_DEEP_COLOR_AWARE 1   // make sure we get 16bpc pixels
-
-#include "AEConfig.h"
-
-#ifdef AE_OS_WIN
-typedef unsigned short PixelType;
-#include <Windows.h>
-#endif
-
-#include "entry.h"
-#include "AE_Effect.h"
-
-#define PF_DISPOSE_WORLD(EFFECT_REF, WORLD_PTR) \
-    (*(in_data->utils->dispose_world))((EFFECT_REF), (WORLD_PTR))
-
-/* Versioning information */
-
-#define MAJOR_VERSION    1
-#define MINOR_VERSION    0
 #define BUG_VERSION      0
 #define STAGE_VERSION    PF_Stage_DEVELOP
 #define BUILD_VERSION    1
