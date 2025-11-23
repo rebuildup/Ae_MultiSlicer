@@ -35,7 +35,7 @@
 #define	MINOR_VERSION	0
 #define	BUG_VERSION		0
 #define	STAGE_VERSION	PF_Stage_RELEASE
-#define	BUILD_VERSION	1
+#define	BUILD_VERSION	0
 
 #define MULTISLICER_WIDTH_MIN         0
 #define MULTISLICER_WIDTH_MAX         100
