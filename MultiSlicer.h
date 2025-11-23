@@ -79,32 +79,6 @@ enum {
 
 enum {
     ANGLE_DISK_ID = 1,
-    float     shiftRandomFactor;// Random multiplier for shift amount
-    float     widthScale;       // Width scale factor (0-1)
-
-    // Precomputed values to minimize per-pixel math
-    float     sliceCenter;      // Center position of slice (slice space)
-    float     halfVisibleWidth; // Half of visible width (slice space)
-    float     leftVisible;      // Left bound of visible region (slice space)
-    float     rightVisible;     // Right bound of visible region (slice space)
-    float     offsetPixels;     // Signed per-slice offset in pixels
-    float     worldShiftX;      // X component of world shift direction
-    float     worldShiftY;      // Y component of world shift direction
-} SliceInfo, * SliceInfoP, ** SliceInfoH;
-
-
-extern "C" {
-
-    DllExport
-        PF_Err
-        EffectMain(
-            PF_Cmd          cmd,
-            PF_InData* in_data,
-            PF_OutData* out_data,
-            PF_ParamDef* params[],
-            PF_LayerDef* output,
-            void* extra);
-
 }
 
 #endif // MultiSlicer_H
