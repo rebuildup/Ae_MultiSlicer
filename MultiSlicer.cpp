@@ -141,7 +141,7 @@ Render (
 	for (int i = 0; i < slices; i++) {
 		if (i % 2 == 1) {
 			int start_y = i * slice_height;
-			int end_y = std::min((int)height, (i + 1) * slice_height);
+			int end_y = (std::min)((int)height, (i + 1) * slice_height);
 			int shift_px = (int)shift;
 			
 			for (int y = start_y; y < end_y; y++) {
