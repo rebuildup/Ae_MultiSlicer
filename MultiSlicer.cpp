@@ -36,6 +36,7 @@ GlobalSetup (
 										BUILD_VERSION);
 	
 	out_data->out_flags =  PF_OutFlag_DEEP_COLOR_AWARE;
+	out_data->out_flags2 = PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
 	
 	return PF_Err_NONE;
 }
@@ -126,7 +127,8 @@ Render (
 	double shift = params[MULTISLICER_SHIFT]->u.fs_d.value;
 	
 	// Copy input to output first
-	PF_COPY(input, output, NULL, NULL);
+	ERR(PF_COPY(input, output, NULL, NULL));
+	if (err) return err;
 	
 	// Simple slice logic
 	A_long width = output->width;
