@@ -3,6 +3,7 @@
 #include <vector>
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 
 static PF_Err 
 About (	
@@ -123,48 +124,59 @@ Render (
 	PF_EffectWorld *input = &params[MULTISLICER_INPUT]->u.ld;
 	
 	// Parameters
-	int slices = params[MULTISLICER_SLICES]->u.sd.value;
+	double angle = (params[MULTISLICER_ANGLE]->u.ad.value / 65536.0) * 3.14159265358979323846 / 180.0; // Convert to radians
 	double shift = params[MULTISLICER_SHIFT]->u.fs_d.value;
+	double width_param = params[MULTISLICER_WIDTH]->u.fs_d.value;
+	int slices = params[MULTISLICER_SLICES]->u.sd.value;
+	int seed = params[MULTISLICER_SEED]->u.sd.value;
 	
 	// Copy input to output first
 	ERR(PF_COPY(input, output, NULL, NULL));
 	if (err) return err;
 	
-	// Simple slice logic
 	A_long width = output->width;
 	A_long height = output->height;
 	A_long rowbytes = output->rowbytes;
+	int pixel_size = PF_WORLD_IS_DEEP(output) ? 8 : 4;
 	
-	if (slices < 1) slices = 1;
-	int slice_height = height / slices;
+	if (slices < 1) return err;
 	
-	// Shift odd slices
+	// Calculate slice direction from angle
+	double cos_a = cos(angle);
+	double sin_a = sin(angle);
+	
+	// Simple LCG random number generator
+	auto lcg_rand = [](int &state) -> double {
+		state = (state * 1103515245 + 12345) & 0x7fffffff;
+		return (double)state / 0x7fffffff;
+	};
+	
+	// Process slices along angle direction
+	double slice_spacing = (double)height / (double)slices;
+	
 	for (int i = 0; i < slices; i++) {
-		if (i % 2 == 1) {
-			int start_y = i * slice_height;
-			int end_y = (std::min)((int)height, (i + 1) * slice_height);
-			int shift_px = (int)shift;
+		int rng_state = seed + i;
+		double random_shift = lcg_rand(rng_state) * shift * 2.0 - shift;
+		double random_width = width_param * (0.5 + lcg_rand(rng_state) * 0.5);
+		
+		int start_y = (int)(i * slice_spacing);
+		int end_y = (std::min)((int)((i + 1) * slice_spacing), (int)height);
+		
+		int shift_px = (int)random_shift;
+		
+		for (int y = start_y; y < end_y; y++) {
+			if (y < 0 || y >= height) continue;
 			
-			for (int y = start_y; y < end_y; y++) {
-				// Shift row
-				// Simple implementation: copy row to temp, write back with offset
-				char *row_ptr = (char*)output->data + y * rowbytes;
-				std::vector<char> temp_row(rowbytes);
-				memcpy(temp_row.data(), row_ptr, rowbytes);
+			char *row_ptr = (char*)output->data + y * rowbytes;
+			std::vector<char> temp_row(rowbytes);
+			memcpy(temp_row.data(), row_ptr, rowbytes);
+			
+			for (int x = 0; x < width; x++) {
+				int src_x = x - shift_px;
+				while (src_x < 0) src_x += width;
+				while (src_x >= width) src_x -= width;
 				
-				int pixel_size = PF_WORLD_IS_DEEP(output) ? 8 : 4; // ARGB 8bit=4, 16bit=8
-				int width_bytes = width * pixel_size;
-				
-				// Clamp shift
-				int shift_bytes = shift_px * pixel_size;
-				// Handle wrap around or clamp? Let's clamp/fill black for simplicity or wrap
-				// Wrap:
-				for (int x = 0; x < width; x++) {
-					int src_x = (x - shift_px) % width;
-					if (src_x < 0) src_x += width;
-					
-					memcpy(row_ptr + x * pixel_size, temp_row.data() + src_x * pixel_size, pixel_size);
-				}
+				memcpy(row_ptr + x * pixel_size, temp_row.data() + src_x * pixel_size, pixel_size);
 			}
 		}
 	}
