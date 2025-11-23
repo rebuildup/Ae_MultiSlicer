@@ -133,6 +133,10 @@ ParamsSetup(
         ANCHOR_POINT_DISK_ID);
 
     // Angle parameter - determines the direction of slicing
+    // NOTE: This angle is ABSOLUTE (not relative to Anchor Point)
+    // - 0° = horizontal slices
+    // - 90° = vertical slices
+    // The slices rotate around the Anchor Point, but the slice direction is fixed by this angle
     AEFX_CLR_STRUCT(def);
     PF_ADD_ANGLE(STR(StrID_Angle_Param_Name),
         MULTISLICER_ANGLE_DFLT,
@@ -168,7 +172,7 @@ static float GetRandomValue(A_long seed, A_long index) {
 
 
 
-// Get pixel color from the source at given coordinates with bounds checking
+// Get pixel color from the source at given coordinates with bilinear interpolation
 static PF_Pixel GetSourcePixel(
     float srcX, float srcY,
     const SliceInfo* sliceInfoP)
@@ -176,21 +180,47 @@ static PF_Pixel GetSourcePixel(
     PF_Pixel result = { 0, 0, 0, 0 }; // Default to transparent black
 
     // Bounds checking
-    if (srcX >= 0 && srcX < sliceInfoP->width &&
-        srcY >= 0 && srcY < sliceInfoP->height) {
-
-        // Calculate the index in the source data
-        A_long srcIndex = ((A_long)srcY * sliceInfoP->rowbytes) + ((A_long)srcX * sizeof(PF_Pixel));
-        PF_Pixel* srcPix = (PF_Pixel*)((char*)sliceInfoP->srcData + srcIndex);
-
-        // Copy the pixel
-        result = *srcPix;
+    if (srcX < -0.5f || srcX >= sliceInfoP->width - 0.5f ||
+        srcY < -0.5f || srcY >= sliceInfoP->height - 0.5f) {
+        return result;
     }
+
+    // Bilinear interpolation for anti-aliasing
+    A_long x0 = (A_long)floorf(srcX);
+    A_long y0 = (A_long)floorf(srcY);
+    A_long x1 = x0 + 1;
+    A_long y1 = y0 + 1;
+    
+    float fx = srcX - x0;
+    float fy = srcY - y0;
+    
+    // Clamp to image bounds
+    x0 = PF_MAX(0, PF_MIN(x0, sliceInfoP->width - 1));
+    x1 = PF_MAX(0, PF_MIN(x1, sliceInfoP->width - 1));
+    y0 = PF_MAX(0, PF_MIN(y0, sliceInfoP->height - 1));
+    y1 = PF_MAX(0, PF_MIN(y1, sliceInfoP->height - 1));
+    
+    // Get the four corner pixels
+    PF_Pixel* p00 = (PF_Pixel*)((char*)sliceInfoP->srcData + y0 * sliceInfoP->rowbytes + x0 * sizeof(PF_Pixel));
+    PF_Pixel* p10 = (PF_Pixel*)((char*)sliceInfoP->srcData + y0 * sliceInfoP->rowbytes + x1 * sizeof(PF_Pixel));
+    PF_Pixel* p01 = (PF_Pixel*)((char*)sliceInfoP->srcData + y1 * sliceInfoP->rowbytes + x0 * sizeof(PF_Pixel));
+    PF_Pixel* p11 = (PF_Pixel*)((char*)sliceInfoP->srcData + y1 * sliceInfoP->rowbytes + x1 * sizeof(PF_Pixel));
+    
+    // Bilinear interpolation
+    float w00 = (1.0f - fx) * (1.0f - fy);
+    float w10 = fx * (1.0f - fy);
+    float w01 = (1.0f - fx) * fy;
+    float w11 = fx * fy;
+    
+    result.alpha = (A_u_char)(w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha + 0.5f);
+    result.red = (A_u_char)(w00 * p00->red + w10 * p10->red + w01 * p01->red + w11 * p11->red + 0.5f);
+    result.green = (A_u_char)(w00 * p00->green + w10 * p10->green + w01 * p01->green + w11 * p11->green + 0.5f);
+    result.blue = (A_u_char)(w00 * p00->blue + w10 * p10->blue + w01 * p01->blue + w11 * p11->blue + 0.5f);
 
     return result;
 }
 
-// Get 16-bit pixel color from the source at given coordinates with bounds checking
+// Get 16-bit pixel color from the source at given coordinates with bilinear interpolation
 static PF_Pixel16 GetSourcePixel16(
     float srcX, float srcY,
     const SliceInfo* sliceInfoP)
@@ -198,16 +228,42 @@ static PF_Pixel16 GetSourcePixel16(
     PF_Pixel16 result = { 0, 0, 0, 0 }; // Default to transparent black
 
     // Bounds checking
-    if (srcX >= 0 && srcX < sliceInfoP->width &&
-        srcY >= 0 && srcY < sliceInfoP->height) {
-
-        // Calculate the index in the source data
-        A_long srcIndex = ((A_long)srcY * sliceInfoP->rowbytes) + ((A_long)srcX * sizeof(PF_Pixel16));
-        PF_Pixel16* srcPix = (PF_Pixel16*)((char*)sliceInfoP->srcData + srcIndex);
-
-        // Copy the pixel
-        result = *srcPix;
+    if (srcX < -0.5f || srcX >= sliceInfoP->width - 0.5f ||
+        srcY < -0.5f || srcY >= sliceInfoP->height - 0.5f) {
+        return result;
     }
+
+    // Bilinear interpolation for anti-aliasing
+    A_long x0 = (A_long)floorf(srcX);
+    A_long y0 = (A_long)floorf(srcY);
+    A_long x1 = x0 + 1;
+    A_long y1 = y0 + 1;
+    
+    float fx = srcX - x0;
+    float fy = srcY - y0;
+    
+    // Clamp to image bounds
+    x0 = PF_MAX(0, PF_MIN(x0, sliceInfoP->width - 1));
+    x1 = PF_MAX(0, PF_MIN(x1, sliceInfoP->width - 1));
+    y0 = PF_MAX(0, PF_MIN(y0, sliceInfoP->height - 1));
+    y1 = PF_MAX(0, PF_MIN(y1, sliceInfoP->height - 1));
+    
+    // Get the four corner pixels
+    PF_Pixel16* p00 = (PF_Pixel16*)((char*)sliceInfoP->srcData + y0 * sliceInfoP->rowbytes + x0 * sizeof(PF_Pixel16));
+    PF_Pixel16* p10 = (PF_Pixel16*)((char*)sliceInfoP->srcData + y0 * sliceInfoP->rowbytes + x1 * sizeof(PF_Pixel16));
+    PF_Pixel16* p01 = (PF_Pixel16*)((char*)sliceInfoP->srcData + y1 * sliceInfoP->rowbytes + x0 * sizeof(PF_Pixel16));
+    PF_Pixel16* p11 = (PF_Pixel16*)((char*)sliceInfoP->srcData + y1 * sliceInfoP->rowbytes + x1 * sizeof(PF_Pixel16));
+    
+    // Bilinear interpolation
+    float w00 = (1.0f - fx) * (1.0f - fy);
+    float w10 = fx * (1.0f - fy);
+    float w01 = (1.0f - fx) * fy;
+    float w11 = fx * fy;
+    
+    result.alpha = (A_u_short)(w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha + 0.5f);
+    result.red = (A_u_short)(w00 * p00->red + w10 * p10->red + w01 * p01->red + w11 * p11->red + 0.5f);
+    result.green = (A_u_short)(w00 * p00->green + w10 * p10->green + w01 * p01->green + w11 * p11->green + 0.5f);
+    result.blue = (A_u_short)(w00 * p00->blue + w10 * p10->blue + w01 * p01->blue + w11 * p11->blue + 0.5f);
 
     return result;
 }
