@@ -47,20 +47,6 @@ typedef unsigned short PixelType;
 
 #include "entry.h"
 #include "AE_Effect.h"
-#include "AE_EffectCB.h"
-#include "AE_Macros.h"
-#include "Param_Utils.h"
-#include "AE_EffectCBSuites.h"
-#include "String_Utils.h"
-#include "AE_GeneralPlug.h"
-#include "AEFX_ChannelDepthTpl.h"
-#include "AEGP_SuiteHandler.h"
-
-#include "MultiSlicer_Strings.h"
-
-// Macros for After Effects SDK functions
-#define PF_NEW_WORLD(EFFECT_REF, WIDTH, HEIGHT, FLAGS, WORLD_PTR) \
-    (*(in_data->utils->new_world))((EFFECT_REF), (WIDTH), (HEIGHT), (FLAGS), (WORLD_PTR))
 
 #define PF_DISPOSE_WORLD(EFFECT_REF, WORLD_PTR) \
     (*(in_data->utils->dispose_world))((EFFECT_REF), (WORLD_PTR))
