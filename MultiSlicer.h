@@ -67,6 +67,25 @@ enum {
     SEED_DISK_ID
 };
 
+// Structure for slice information
+typedef struct {
+    void* srcData;
+    A_long rowbytes;
+    A_long width;
+    A_long height;
+    float centerX;
+    float centerY;
+    float angleCos;
+    float angleSin;
+    int numSlices;
+    float widthScale;
+    float shiftAmount;
+    float sliceStart;
+    float sliceWidth;
+    float shiftDirection;
+    float shiftRandomFactor;
+} SliceInfo;
+
 extern "C" {
     DllExport
     PF_Err
