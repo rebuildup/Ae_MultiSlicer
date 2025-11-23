@@ -32,7 +32,7 @@ GlobalSetup (
 										BUILD_VERSION);
 	
 	out_data->out_flags =  PF_OutFlag_DEEP_COLOR_AWARE;
-	out_data->out_flags2 = PF_OutFlag2_SUPPORTS_THREADED_RENDERING | PF_OutFlag2_FLOAT_COLOR_AWARE;
+	out_data->out_flags2 = PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
 	
 	return PF_Err_NONE;
 }
@@ -116,8 +116,53 @@ Render (
 	PF_Err				err		= PF_Err_NONE;
 	AEGP_SuiteHandler	suites(in_data->pica_basicP);
 
-	// Simple passthrough for now
-	PF_COPY(&params[0]->u.ld, output, NULL, NULL);
+	PF_EffectWorld *input = &params[MULTISLICER_INPUT]->u.ld;
+	
+	// Parameters
+	int slices = params[MULTISLICER_SLICES]->u.sd.value;
+	double shift = params[MULTISLICER_SHIFT]->u.fs_d.value;
+	
+	// Copy input to output first
+	PF_COPY(input, output, NULL, NULL);
+	
+	// Simple slice logic
+	A_long width = output->width;
+	A_long height = output->height;
+	A_long rowbytes = output->rowbytes;
+	
+	if (slices < 1) slices = 1;
+	int slice_height = height / slices;
+	
+	// Shift odd slices
+	for (int i = 0; i < slices; i++) {
+		if (i % 2 == 1) {
+			int start_y = i * slice_height;
+			int end_y = std::min((int)height, (i + 1) * slice_height);
+			int shift_px = (int)shift;
+			
+			for (int y = start_y; y < end_y; y++) {
+				// Shift row
+				// Simple implementation: copy row to temp, write back with offset
+				char *row_ptr = (char*)output->data + y * rowbytes;
+				std::vector<char> temp_row(rowbytes);
+				memcpy(temp_row.data(), row_ptr, rowbytes);
+				
+				int pixel_size = PF_WORLD_IS_DEEP(output) ? 8 : 4; // ARGB 8bit=4, 16bit=8
+				int width_bytes = width * pixel_size;
+				
+				// Clamp shift
+				int shift_bytes = shift_px * pixel_size;
+				// Handle wrap around or clamp? Let's clamp/fill black for simplicity or wrap
+				// Wrap:
+				for (int x = 0; x < width; x++) {
+					int src_x = (x - shift_px) % width;
+					if (src_x < 0) src_x += width;
+					
+					memcpy(row_ptr + x * pixel_size, temp_row.data() + src_x * pixel_size, pixel_size);
+				}
+			}
+		}
+	}
 
 	return err;
 }
