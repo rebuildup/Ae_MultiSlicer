@@ -277,15 +277,90 @@ static void RotatePoint(
     y = newY;
 }
 
-static const int kAASampleCount = 4;
-static const float kAASampleOffsets[kAASampleCount][2] = {
-    { -0.25f, -0.25f },
-    { 0.25f, -0.25f },
-    { -0.25f, 0.25f },
-    { 0.25f, 0.25f }
-};
+static inline float ComputeEdgeWeight(float dist, float feather)
+{
+    if (feather <= 0.0f) {
+        return (dist >= 0.0f) ? 1.0f : 0.0f;
+    }
 
-static inline A_long FindSliceIndex(const SliceContext* ctx, float sliceX)
+    if (dist <= -feather) {
+        return 0.0f;
+    }
+    if (dist >= feather) {
+        return 1.0f;
+    }
+
+    return 0.5f + (dist / (2.0f * feather));
+}
+
+static inline float ComputeSliceCoverage(
+    const SliceSegment& segment,
+    float sliceX,
+    float feather)
+{
+    if (segment.visibleEnd <= segment.visibleStart) {
+        return 0.0f;
+    }
+
+    float startWeight = ComputeEdgeWeight(sliceX - segment.visibleStart, feather);
+    float endWeight = ComputeEdgeWeight(segment.visibleEnd - sliceX, feather);
+    float coverage = MIN(startWeight, endWeight);
+    return MAX(0.0f, MIN(coverage, 1.0f));
+}
+
+static inline PF_Pixel SampleShiftedPixel8(
+    const SliceContext* ctx,
+    const SliceSegment& segment,
+    float worldX,
+    float worldY)
+{
+    float offsetPixels = ctx->shiftAmount * segment.shiftRandomFactor * segment.shiftDirection;
+    float srcX = worldX + ctx->shiftDirX * offsetPixels;
+    float srcY = worldY + ctx->shiftDirY * offsetPixels;
+    return SampleSourcePixel8(srcX, srcY, ctx);
+}
+
+static inline PF_Pixel16 SampleShiftedPixel16(
+    const SliceContext* ctx,
+    const SliceSegment& segment,
+    float worldX,
+    float worldY)
+{
+    float offsetPixels = ctx->shiftAmount * segment.shiftRandomFactor * segment.shiftDirection;
+    float srcX = worldX + ctx->shiftDirX * offsetPixels;
+    float srcY = worldY + ctx->shiftDirY * offsetPixels;
+    return SampleSourcePixel16(srcX, srcY, ctx);
+}
+
+static inline void AddWeightedPixel(
+    const PF_Pixel& sample,
+    float weight,
+    float& accumA,
+    float& accumR,
+    float& accumG,
+    float& accumB)
+{
+    accumA += weight * sample.alpha;
+    accumR += weight * sample.red;
+    accumG += weight * sample.green;
+    accumB += weight * sample.blue;
+}
+
+static inline void AddWeightedPixel16(
+    const PF_Pixel16& sample,
+    float weight,
+    float& accumA,
+    float& accumR,
+    float& accumG,
+    float& accumB)
+{
+    accumA += weight * static_cast<float>(sample.alpha);
+    accumR += weight * static_cast<float>(sample.red);
+    accumG += weight * static_cast<float>(sample.green);
+    accumB += weight * static_cast<float>(sample.blue);
+}
+
+static inline A_long FindSliceFloorIndex(const SliceContext* ctx, float sliceX)
 {
     if (!ctx || ctx->numSlices <= 0) {
         return -1;
@@ -293,97 +368,20 @@ static inline A_long FindSliceIndex(const SliceContext* ctx, float sliceX)
 
     A_long low = 0;
     A_long high = ctx->numSlices - 1;
+    A_long result = -1;
 
     while (low <= high) {
         A_long mid = (low + high) >> 1;
-        const SliceSegment& segment = ctx->segments[mid];
-
-        if (sliceX < segment.sliceStart) {
-            high = mid - 1;
-        }
-        else if (sliceX > segment.sliceEnd) {
+        if (sliceX >= ctx->segments[mid].sliceStart) {
+            result = mid;
             low = mid + 1;
         }
         else {
-            return mid;
+            high = mid - 1;
         }
     }
 
-    return -1;
-}
-
-static inline bool SampleSlicePoint8(
-    const SliceContext* ctx,
-    float worldX,
-    float worldY,
-    PF_Pixel* outPixel)
-{
-    if (!ctx || !outPixel) {
-        return false;
-    }
-
-    float sliceX = worldX;
-    float sliceY = worldY;
-    RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos, -ctx->angleSin);
-
-    const A_long sliceIndex = FindSliceIndex(ctx, sliceX);
-    if (sliceIndex < 0) {
-        return false;
-    }
-
-    const SliceSegment& segment = ctx->segments[sliceIndex];
-    if (segment.visibleStart >= segment.visibleEnd) {
-        return false;
-    }
-
-    const float epsilon = 0.0001f;
-    if (sliceX < segment.visibleStart - epsilon || sliceX > segment.visibleEnd + epsilon) {
-        return false;
-    }
-
-    const float offsetPixels = ctx->shiftAmount * segment.shiftRandomFactor * segment.shiftDirection;
-    const float srcX = worldX + ctx->shiftDirX * offsetPixels;
-    const float srcY = worldY + ctx->shiftDirY * offsetPixels;
-
-    *outPixel = SampleSourcePixel8(srcX, srcY, ctx);
-    return true;
-}
-
-static inline bool SampleSlicePoint16(
-    const SliceContext* ctx,
-    float worldX,
-    float worldY,
-    PF_Pixel16* outPixel)
-{
-    if (!ctx || !outPixel) {
-        return false;
-    }
-
-    float sliceX = worldX;
-    float sliceY = worldY;
-    RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos, -ctx->angleSin);
-
-    const A_long sliceIndex = FindSliceIndex(ctx, sliceX);
-    if (sliceIndex < 0) {
-        return false;
-    }
-
-    const SliceSegment& segment = ctx->segments[sliceIndex];
-    if (segment.visibleStart >= segment.visibleEnd) {
-        return false;
-    }
-
-    const float epsilon = 0.0001f;
-    if (sliceX < segment.visibleStart - epsilon || sliceX > segment.visibleEnd + epsilon) {
-        return false;
-    }
-
-    const float offsetPixels = ctx->shiftAmount * segment.shiftRandomFactor * segment.shiftDirection;
-    const float srcX = worldX + ctx->shiftDirX * offsetPixels;
-    const float srcY = worldY + ctx->shiftDirY * offsetPixels;
-
-    *outPixel = SampleSourcePixel16(srcX, srcY, ctx);
-    return true;
+    return result;
 }
 
 static PF_Err
@@ -396,41 +394,71 @@ ProcessMultiSlice(
 {
     PF_Err err = PF_Err_NONE;
     const SliceContext* ctx = reinterpret_cast<const SliceContext*>(refcon);
-    if (!ctx) {
+    if (!ctx || ctx->numSlices <= 0) {
+        *out = *in;
         return err;
     }
 
-    const bool useAA = ctx->useAntialias;
-    const A_long sampleCount = useAA ? kAASampleCount : 1;
-    const float baseX = static_cast<float>(x);
-    const float baseY = static_cast<float>(y);
+    float worldX = static_cast<float>(x);
+    float worldY = static_cast<float>(y);
+    float sliceX = worldX;
+    float sliceY = worldY;
+    RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos, -ctx->angleSin);
 
+    A_long candidates[3] = { -1, -1, -1 };
+    int candidateCount = 0;
+    A_long baseIdx = FindSliceFloorIndex(ctx, sliceX);
+
+    if (baseIdx < 0) {
+        if (ctx->numSlices > 0) {
+            candidates[candidateCount++] = 0;
+        }
+        if (ctx->numSlices > 1 && candidateCount < 3) {
+            candidates[candidateCount++] = 1;
+        }
+    }
+    else {
+        candidates[candidateCount++] = baseIdx;
+        if (baseIdx - 1 >= 0 && candidateCount < 3) {
+            candidates[candidateCount++] = baseIdx - 1;
+        }
+        if (baseIdx + 1 < ctx->numSlices && candidateCount < 3) {
+            candidates[candidateCount++] = baseIdx + 1;
+        }
+    }
+
+    float remaining = 1.0f;
     float accumA = 0.0f;
     float accumR = 0.0f;
     float accumG = 0.0f;
     float accumB = 0.0f;
 
-    for (A_long s = 0; s < sampleCount; ++s) {
-        const float offsetX = useAA ? kAASampleOffsets[s][0] : 0.0f;
-        const float offsetY = useAA ? kAASampleOffsets[s][1] : 0.0f;
-        PF_Pixel samplePixel = { 0, 0, 0, 0 };
-        if (SampleSlicePoint8(ctx, baseX + offsetX, baseY + offsetY, &samplePixel)) {
-            accumA += samplePixel.alpha;
-            accumR += samplePixel.red;
-            accumG += samplePixel.green;
-            accumB += samplePixel.blue;
+    for (int i = 0; i < candidateCount && remaining > 0.0001f; ++i) {
+        A_long idx = candidates[i];
+        if (idx < 0 || idx >= ctx->numSlices) {
+            continue;
         }
+        const SliceSegment& segment = ctx->segments[idx];
+        float coverage = ComputeSliceCoverage(segment, sliceX, ctx->featherWidth);
+        if (coverage <= 0.0f) {
+            continue;
+        }
+
+        float applied = MIN(coverage, remaining);
+        PF_Pixel samplePixel = SampleShiftedPixel8(ctx, segment, worldX, worldY);
+        AddWeightedPixel(samplePixel, applied, accumA, accumR, accumG, accumB);
+        remaining -= applied;
     }
 
-    if (sampleCount == 0) {
-        return err;
+    if (remaining > 0.0001f) {
+        PF_Pixel baseSample = SampleSourcePixel8(worldX, worldY, ctx);
+        AddWeightedPixel(baseSample, remaining, accumA, accumR, accumG, accumB);
     }
 
-    const float invSamples = 1.0f / static_cast<float>(sampleCount);
-    out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumA * invSamples + 0.5f)));
-    out->red = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumR * invSamples + 0.5f)));
-    out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumG * invSamples + 0.5f)));
-    out->blue = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumB * invSamples + 0.5f)));
+    out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumA + 0.5f)));
+    out->red = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumR + 0.5f)));
+    out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumG + 0.5f)));
+    out->blue = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumB + 0.5f)));
 
     return err;
 }
@@ -446,41 +474,71 @@ ProcessMultiSlice16(
 {
     PF_Err err = PF_Err_NONE;
     const SliceContext* ctx = reinterpret_cast<const SliceContext*>(refcon);
-    if (!ctx) {
+    if (!ctx || ctx->numSlices <= 0) {
+        *out = *in;
         return err;
     }
 
-    const bool useAA = ctx->useAntialias;
-    const A_long sampleCount = useAA ? kAASampleCount : 1;
-    const float baseX = static_cast<float>(x);
-    const float baseY = static_cast<float>(y);
+    float worldX = static_cast<float>(x);
+    float worldY = static_cast<float>(y);
+    float sliceX = worldX;
+    float sliceY = worldY;
+    RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos, -ctx->angleSin);
 
+    A_long candidates[3] = { -1, -1, -1 };
+    int candidateCount = 0;
+    A_long baseIdx = FindSliceFloorIndex(ctx, sliceX);
+
+    if (baseIdx < 0) {
+        if (ctx->numSlices > 0) {
+            candidates[candidateCount++] = 0;
+        }
+        if (ctx->numSlices > 1 && candidateCount < 3) {
+            candidates[candidateCount++] = 1;
+        }
+    }
+    else {
+        candidates[candidateCount++] = baseIdx;
+        if (baseIdx - 1 >= 0 && candidateCount < 3) {
+            candidates[candidateCount++] = baseIdx - 1;
+        }
+        if (baseIdx + 1 < ctx->numSlices && candidateCount < 3) {
+            candidates[candidateCount++] = baseIdx + 1;
+        }
+    }
+
+    float remaining = 1.0f;
     float accumA = 0.0f;
     float accumR = 0.0f;
     float accumG = 0.0f;
     float accumB = 0.0f;
 
-    for (A_long s = 0; s < sampleCount; ++s) {
-        const float offsetX = useAA ? kAASampleOffsets[s][0] : 0.0f;
-        const float offsetY = useAA ? kAASampleOffsets[s][1] : 0.0f;
-        PF_Pixel16 samplePixel = { 0, 0, 0, 0 };
-        if (SampleSlicePoint16(ctx, baseX + offsetX, baseY + offsetY, &samplePixel)) {
-            accumA += static_cast<float>(samplePixel.alpha);
-            accumR += static_cast<float>(samplePixel.red);
-            accumG += static_cast<float>(samplePixel.green);
-            accumB += static_cast<float>(samplePixel.blue);
+    for (int i = 0; i < candidateCount && remaining > 0.0001f; ++i) {
+        A_long idx = candidates[i];
+        if (idx < 0 || idx >= ctx->numSlices) {
+            continue;
         }
+        const SliceSegment& segment = ctx->segments[idx];
+        float coverage = ComputeSliceCoverage(segment, sliceX, ctx->featherWidth);
+        if (coverage <= 0.0f) {
+            continue;
+        }
+
+        float applied = MIN(coverage, remaining);
+        PF_Pixel16 samplePixel = SampleShiftedPixel16(ctx, segment, worldX, worldY);
+        AddWeightedPixel16(samplePixel, applied, accumA, accumR, accumG, accumB);
+        remaining -= applied;
     }
 
-    if (sampleCount == 0) {
-        return err;
+    if (remaining > 0.0001f) {
+        PF_Pixel16 baseSample = SampleSourcePixel16(worldX, worldY, ctx);
+        AddWeightedPixel16(baseSample, remaining, accumA, accumR, accumG, accumB);
     }
 
-    const float invSamples = 1.0f / static_cast<float>(sampleCount);
-    out->alpha = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumA * invSamples + 0.5f)));
-    out->red = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumR * invSamples + 0.5f)));
-    out->green = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumG * invSamples + 0.5f)));
-    out->blue = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumB * invSamples + 0.5f)));
+    out->alpha = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumA + 0.5f)));
+    out->red = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumR + 0.5f)));
+    out->green = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumG + 0.5f)));
+    out->blue = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumB + 0.5f)));
 
     return err;
 }
@@ -512,8 +570,10 @@ Render(
 
     float downsize_x = static_cast<float>(in_data->downsample_x.den) / static_cast<float>(in_data->downsample_x.num);
     float downsize_y = static_cast<float>(in_data->downsample_y.den) / static_cast<float>(in_data->downsample_y.num);
-    float resolution_factor = min(downsize_x, downsize_y);
-    float shiftAmount = fabsf(shiftRaw) / resolution_factor;
+    float resolution_factor = std::min(downsize_x, downsize_y);
+    float shiftAmount = fabsf(shiftRaw) / MAX(0.0001f, resolution_factor);
+    float pixelSpan = std::max(downsize_x, downsize_y);
+    float featherWidth = 0.70710678f * std::max(0.5f, pixelSpan);
 
     if ((shiftAmount < 0.001f && fabsf(width - 0.9999f) < 0.0001f) || numSlices <= 1) {
         ERR(suites.WorldTransformSuite1()->copy_hq(
@@ -655,7 +715,7 @@ Render(
     context.shiftAmount = shiftAmount;
     context.numSlices = numSlices;
     context.segments = segments;
-    context.useAntialias = true;
+    context.featherWidth = featherWidth;
 
     if (PF_WORLD_IS_DEEP(inputP)) {
         ERR(suites.Iterate16Suite1()->iterate(

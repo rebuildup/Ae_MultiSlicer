@@ -98,7 +98,7 @@ typedef struct {
     float shiftAmount;
     A_long numSlices;
     const SliceSegment* segments;
-    bool useAntialias;
+    float featherWidth;
 } SliceContext;
 
 extern "C" {
@@ -114,3 +114,5 @@ extern "C" {
 }
 
 #endif // MULTISLICER_H
+
+
