@@ -1,4 +1,4 @@
-﻿/*******************************************************************/
+/*******************************************************************/
 /*                                                                 */
 /*                      ADOBE CONFIDENTIAL                         */
 /*                   _ _ _ _ _ _ _ _ _ _ _ _ _                     */
@@ -505,9 +505,13 @@ Render(
     A_long imageWidth = inputP->width;
     A_long imageHeight = inputP->height;
     
-    // Convert anchor point from percentage to pixel coordinates
-    A_long centerX = (A_long)((anchor_x * imageWidth) / (100 << 16));
-    A_long centerY = (A_long)((anchor_y * imageHeight) / (100 << 16));
+    // Anchor point is delivered as 16.16 fixed-point layer coordinates
+    float centerX = static_cast<float>(anchor_x) / 65536.0f;
+    float centerY = static_cast<float>(anchor_y) / 65536.0f;
+
+    // Clamp inside the current layer bounds to avoid wobble near edges
+    centerX = MAX(0.0f, MIN(centerX, static_cast<float>(imageWidth - 1)));
+    centerY = MAX(0.0f, MIN(centerY, static_cast<float>(imageHeight - 1)));
 
     // Calculate angle in radians
     float angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
