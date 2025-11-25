@@ -173,101 +173,94 @@ static float GetRandomValue(A_long seed, A_long index) {
 
 
 
-// Get pixel color from the source at given coordinates with bilinear interpolation
-static PF_Pixel GetSourcePixel(
-    float srcX, float srcY,
-    const SliceInfo* sliceInfoP)
+// Sample pixel color from the source at given coordinates with bilinear interpolation
+static PF_Pixel SampleSourcePixel8(
+    float srcX,
+    float srcY,
+    const SliceContext* ctx)
 {
     PF_Pixel result = { 0, 0, 0, 0 }; // Default to transparent black
 
-    // Bounds checking
-    if (srcX < -0.5f || srcX >= sliceInfoP->width - 0.5f ||
-        srcY < -0.5f || srcY >= sliceInfoP->height - 0.5f) {
+    if (srcX < -0.5f || srcX >= ctx->width - 0.5f ||
+        srcY < -0.5f || srcY >= ctx->height - 0.5f) {
         return result;
     }
 
-    // Bilinear interpolation for anti-aliasing
-    A_long x0 = (A_long)floorf(srcX);
-    A_long y0 = (A_long)floorf(srcY);
+    A_long x0 = static_cast<A_long>(floorf(srcX));
+    A_long y0 = static_cast<A_long>(floorf(srcY));
     A_long x1 = x0 + 1;
     A_long y1 = y0 + 1;
-    
-    float fx = srcX - x0;
-    float fy = srcY - y0;
-    
-    // Clamp to image bounds
-    x0 = MAX(0L, MIN(x0, sliceInfoP->width - 1));
-    x1 = MAX(0L, MIN(x1, sliceInfoP->width - 1));
-    y0 = MAX(0L, MIN(y0, sliceInfoP->height - 1));
-    y1 = MAX(0L, MIN(y1, sliceInfoP->height - 1));
-    
-    // Get the four corner pixels
-    PF_Pixel* p00 = (PF_Pixel*)((char*)sliceInfoP->srcData + y0 * sliceInfoP->rowbytes + x0 * sizeof(PF_Pixel));
-    PF_Pixel* p10 = (PF_Pixel*)((char*)sliceInfoP->srcData + y0 * sliceInfoP->rowbytes + x1 * sizeof(PF_Pixel));
-    PF_Pixel* p01 = (PF_Pixel*)((char*)sliceInfoP->srcData + y1 * sliceInfoP->rowbytes + x0 * sizeof(PF_Pixel));
-    PF_Pixel* p11 = (PF_Pixel*)((char*)sliceInfoP->srcData + y1 * sliceInfoP->rowbytes + x1 * sizeof(PF_Pixel));
-    
-    // Bilinear interpolation
-    float w00 = (1.0f - fx) * (1.0f - fy);
-    float w10 = fx * (1.0f - fy);
-    float w01 = (1.0f - fx) * fy;
-    float w11 = fx * fy;
-    
-    result.alpha = (A_u_char)(w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha + 0.5f);
-    result.red = (A_u_char)(w00 * p00->red + w10 * p10->red + w01 * p01->red + w11 * p11->red + 0.5f);
-    result.green = (A_u_char)(w00 * p00->green + w10 * p10->green + w01 * p01->green + w11 * p11->green + 0.5f);
-    result.blue = (A_u_char)(w00 * p00->blue + w10 * p10->blue + w01 * p01->blue + w11 * p11->blue + 0.5f);
+
+    const float fx = srcX - x0;
+    const float fy = srcY - y0;
+
+    x0 = MAX(0L, MIN(x0, ctx->width - 1));
+    x1 = MAX(0L, MIN(x1, ctx->width - 1));
+    y0 = MAX(0L, MIN(y0, ctx->height - 1));
+    y1 = MAX(0L, MIN(y1, ctx->height - 1));
+
+    PF_Pixel* p00 = reinterpret_cast<PF_Pixel*>((reinterpret_cast<char*>(ctx->srcData)) + y0 * ctx->rowbytes + x0 * static_cast<A_long>(sizeof(PF_Pixel)));
+    PF_Pixel* p10 = reinterpret_cast<PF_Pixel*>((reinterpret_cast<char*>(ctx->srcData)) + y0 * ctx->rowbytes + x1 * static_cast<A_long>(sizeof(PF_Pixel)));
+    PF_Pixel* p01 = reinterpret_cast<PF_Pixel*>((reinterpret_cast<char*>(ctx->srcData)) + y1 * ctx->rowbytes + x0 * static_cast<A_long>(sizeof(PF_Pixel)));
+    PF_Pixel* p11 = reinterpret_cast<PF_Pixel*>((reinterpret_cast<char*>(ctx->srcData)) + y1 * ctx->rowbytes + x1 * static_cast<A_long>(sizeof(PF_Pixel)));
+
+    const float w00 = (1.0f - fx) * (1.0f - fy);
+    const float w10 = fx * (1.0f - fy);
+    const float w01 = (1.0f - fx) * fy;
+    const float w11 = fx * fy;
+
+    result.alpha = static_cast<A_u_char>(w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha + 0.5f);
+    result.red = static_cast<A_u_char>(w00 * p00->red + w10 * p10->red + w01 * p01->red + w11 * p11->red + 0.5f);
+    result.green = static_cast<A_u_char>(w00 * p00->green + w10 * p10->green + w01 * p01->green + w11 * p11->green + 0.5f);
+    result.blue = static_cast<A_u_char>(w00 * p00->blue + w10 * p10->blue + w01 * p01->blue + w11 * p11->blue + 0.5f);
 
     return result;
 }
 
-// Get 16-bit pixel color from the source at given coordinates with bilinear interpolation
-static PF_Pixel16 GetSourcePixel16(
-    float srcX, float srcY,
-    const SliceInfo* sliceInfoP)
+// Sample 16-bit pixel color from the source with bilinear interpolation
+static PF_Pixel16 SampleSourcePixel16(
+    float srcX,
+    float srcY,
+    const SliceContext* ctx)
 {
-    PF_Pixel16 result = { 0, 0, 0, 0 }; // Default to transparent black
+    PF_Pixel16 result = { 0, 0, 0, 0 };
 
-    // Bounds checking
-    if (srcX < -0.5f || srcX >= sliceInfoP->width - 0.5f ||
-        srcY < -0.5f || srcY >= sliceInfoP->height - 0.5f) {
+    if (srcX < -0.5f || srcX >= ctx->width - 0.5f ||
+        srcY < -0.5f || srcY >= ctx->height - 0.5f) {
         return result;
     }
 
-    // Bilinear interpolation for anti-aliasing
-    A_long x0 = (A_long)floorf(srcX);
-    A_long y0 = (A_long)floorf(srcY);
+    A_long x0 = static_cast<A_long>(floorf(srcX));
+    A_long y0 = static_cast<A_long>(floorf(srcY));
     A_long x1 = x0 + 1;
     A_long y1 = y0 + 1;
-    
-    float fx = srcX - x0;
-    float fy = srcY - y0;
-    
-    // Clamp to image bounds
-    x0 = MAX(0L, MIN(x0, sliceInfoP->width - 1));
-    x1 = MAX(0L, MIN(x1, sliceInfoP->width - 1));
-    y0 = MAX(0L, MIN(y0, sliceInfoP->height - 1));
-    y1 = MAX(0L, MIN(y1, sliceInfoP->height - 1));
-    
-    // Get the four corner pixels
-    PF_Pixel16* p00 = (PF_Pixel16*)((char*)sliceInfoP->srcData + y0 * sliceInfoP->rowbytes + x0 * sizeof(PF_Pixel16));
-    PF_Pixel16* p10 = (PF_Pixel16*)((char*)sliceInfoP->srcData + y0 * sliceInfoP->rowbytes + x1 * sizeof(PF_Pixel16));
-    PF_Pixel16* p01 = (PF_Pixel16*)((char*)sliceInfoP->srcData + y1 * sliceInfoP->rowbytes + x0 * sizeof(PF_Pixel16));
-    PF_Pixel16* p11 = (PF_Pixel16*)((char*)sliceInfoP->srcData + y1 * sliceInfoP->rowbytes + x1 * sizeof(PF_Pixel16));
-    
-    // Bilinear interpolation
-    float w00 = (1.0f - fx) * (1.0f - fy);
-    float w10 = fx * (1.0f - fy);
-    float w01 = (1.0f - fx) * fy;
-    float w11 = fx * fy;
-    
-    result.alpha = (A_u_short)(w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha + 0.5f);
-    result.red = (A_u_short)(w00 * p00->red + w10 * p10->red + w01 * p01->red + w11 * p11->red + 0.5f);
-    result.green = (A_u_short)(w00 * p00->green + w10 * p10->green + w01 * p01->green + w11 * p11->green + 0.5f);
-    result.blue = (A_u_short)(w00 * p00->blue + w10 * p10->blue + w01 * p01->blue + w11 * p11->blue + 0.5f);
+
+    const float fx = srcX - x0;
+    const float fy = srcY - y0;
+
+    x0 = MAX(0L, MIN(x0, ctx->width - 1));
+    x1 = MAX(0L, MIN(x1, ctx->width - 1));
+    y0 = MAX(0L, MIN(y0, ctx->height - 1));
+    y1 = MAX(0L, MIN(y1, ctx->height - 1));
+
+    PF_Pixel16* p00 = reinterpret_cast<PF_Pixel16*>((reinterpret_cast<char*>(ctx->srcData)) + y0 * ctx->rowbytes + x0 * static_cast<A_long>(sizeof(PF_Pixel16)));
+    PF_Pixel16* p10 = reinterpret_cast<PF_Pixel16*>((reinterpret_cast<char*>(ctx->srcData)) + y0 * ctx->rowbytes + x1 * static_cast<A_long>(sizeof(PF_Pixel16)));
+    PF_Pixel16* p01 = reinterpret_cast<PF_Pixel16*>((reinterpret_cast<char*>(ctx->srcData)) + y1 * ctx->rowbytes + x0 * static_cast<A_long>(sizeof(PF_Pixel16)));
+    PF_Pixel16* p11 = reinterpret_cast<PF_Pixel16*>((reinterpret_cast<char*>(ctx->srcData)) + y1 * ctx->rowbytes + x1 * static_cast<A_long>(sizeof(PF_Pixel16)));
+
+    const float w00 = (1.0f - fx) * (1.0f - fy);
+    const float w10 = fx * (1.0f - fy);
+    const float w01 = (1.0f - fx) * fy;
+    const float w11 = fx * fy;
+
+    result.alpha = static_cast<A_u_short>(w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha + 0.5f);
+    result.red = static_cast<A_u_short>(w00 * p00->red + w10 * p10->red + w01 * p01->red + w11 * p11->red + 0.5f);
+    result.green = static_cast<A_u_short>(w00 * p00->green + w10 * p10->green + w01 * p01->green + w11 * p11->green + 0.5f);
+    result.blue = static_cast<A_u_short>(w00 * p00->blue + w10 * p10->blue + w01 * p01->blue + w11 * p11->blue + 0.5f);
 
     return result;
 }
+
 static void RotatePoint(
     float centerX, float centerY,
     float& x, float& y,
@@ -284,6 +277,115 @@ static void RotatePoint(
     y = newY;
 }
 
+static const int kAASampleCount = 4;
+static const float kAASampleOffsets[kAASampleCount][2] = {
+    { -0.25f, -0.25f },
+    { 0.25f, -0.25f },
+    { -0.25f, 0.25f },
+    { 0.25f, 0.25f }
+};
+
+static inline A_long FindSliceIndex(const SliceContext* ctx, float sliceX)
+{
+    if (!ctx || ctx->numSlices <= 0) {
+        return -1;
+    }
+
+    A_long low = 0;
+    A_long high = ctx->numSlices - 1;
+
+    while (low <= high) {
+        A_long mid = (low + high) >> 1;
+        const SliceSegment& segment = ctx->segments[mid];
+
+        if (sliceX < segment.sliceStart) {
+            high = mid - 1;
+        }
+        else if (sliceX > segment.sliceEnd) {
+            low = mid + 1;
+        }
+        else {
+            return mid;
+        }
+    }
+
+    return -1;
+}
+
+static inline bool SampleSlicePoint8(
+    const SliceContext* ctx,
+    float worldX,
+    float worldY,
+    PF_Pixel* outPixel)
+{
+    if (!ctx || !outPixel) {
+        return false;
+    }
+
+    float sliceX = worldX;
+    float sliceY = worldY;
+    RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos, -ctx->angleSin);
+
+    const A_long sliceIndex = FindSliceIndex(ctx, sliceX);
+    if (sliceIndex < 0) {
+        return false;
+    }
+
+    const SliceSegment& segment = ctx->segments[sliceIndex];
+    if (segment.visibleStart >= segment.visibleEnd) {
+        return false;
+    }
+
+    const float epsilon = 0.0001f;
+    if (sliceX < segment.visibleStart - epsilon || sliceX > segment.visibleEnd + epsilon) {
+        return false;
+    }
+
+    const float offsetPixels = ctx->shiftAmount * segment.shiftRandomFactor * segment.shiftDirection;
+    const float srcX = worldX + ctx->shiftDirX * offsetPixels;
+    const float srcY = worldY + ctx->shiftDirY * offsetPixels;
+
+    *outPixel = SampleSourcePixel8(srcX, srcY, ctx);
+    return true;
+}
+
+static inline bool SampleSlicePoint16(
+    const SliceContext* ctx,
+    float worldX,
+    float worldY,
+    PF_Pixel16* outPixel)
+{
+    if (!ctx || !outPixel) {
+        return false;
+    }
+
+    float sliceX = worldX;
+    float sliceY = worldY;
+    RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos, -ctx->angleSin);
+
+    const A_long sliceIndex = FindSliceIndex(ctx, sliceX);
+    if (sliceIndex < 0) {
+        return false;
+    }
+
+    const SliceSegment& segment = ctx->segments[sliceIndex];
+    if (segment.visibleStart >= segment.visibleEnd) {
+        return false;
+    }
+
+    const float epsilon = 0.0001f;
+    if (sliceX < segment.visibleStart - epsilon || sliceX > segment.visibleEnd + epsilon) {
+        return false;
+    }
+
+    const float offsetPixels = ctx->shiftAmount * segment.shiftRandomFactor * segment.shiftDirection;
+    const float srcX = worldX + ctx->shiftDirX * offsetPixels;
+    const float srcY = worldY + ctx->shiftDirY * offsetPixels;
+
+    *outPixel = SampleSourcePixel16(srcX, srcY, ctx);
+    return true;
+}
+
 static PF_Err
 ProcessMultiSlice(
     void* refcon,
@@ -293,79 +395,42 @@ ProcessMultiSlice(
     PF_Pixel* out)
 {
     PF_Err err = PF_Err_NONE;
-    SliceInfo* sliceInfosArray = (SliceInfo*)refcon;
-
-    // Check if we're in identity mode
-    if (sliceInfosArray[0].shiftAmount < 0.001f && sliceInfosArray[0].widthScale > 0.9999f) {
-        *out = *in;
+    const SliceContext* ctx = reinterpret_cast<const SliceContext*>(refcon);
+    if (!ctx) {
         return err;
     }
 
-    // Start with transparent pixel
-    out->alpha = 0;
-    out->red = 0;
-    out->green = 0;
-    out->blue = 0;
+    const bool useAA = ctx->useAntialias;
+    const A_long sampleCount = useAA ? kAASampleCount : 1;
+    const float baseX = static_cast<float>(x);
+    const float baseY = static_cast<float>(y);
 
-    // Get composition center from first slice
-    float centerX = sliceInfosArray[0].centerX;
-    float centerY = sliceInfosArray[0].centerY;
-    float angleCos = sliceInfosArray[0].angleCos;
-    float angleSin = sliceInfosArray[0].angleSin;
+    float accumA = 0.0f;
+    float accumR = 0.0f;
+    float accumG = 0.0f;
+    float accumB = 0.0f;
 
-    // FIXED: First rotate the pixel coordinates in the inverse direction
-    // This transforms from world space to slice space
-    float sliceX = x;
-    float sliceY = y;
-    // Use negative angle for inverse rotation
-    RotatePoint(centerX, centerY, sliceX, sliceY, angleCos, -angleSin);
-
-    // Check which slice this pixel belongs to
-    for (int i = 0; i < sliceInfosArray[0].numSlices; i++) {
-        SliceInfo* currentSlice = &sliceInfosArray[i];
-
-        // Skip slices with zero width
-        if (currentSlice->widthScale <= 0.001f) continue;
-
-        // Calculate slice boundaries in horizontal space
-        float sliceCenter = currentSlice->sliceStart + (currentSlice->sliceWidth / 2.0f);
-        float halfVisibleWidth = (currentSlice->sliceWidth / 2.0f) * currentSlice->widthScale;
-        float leftVisible = sliceCenter - halfVisibleWidth;
-        float rightVisible = sliceCenter + halfVisibleWidth;
-
-        // Check if the rotated point is within the horizontal slice
-        const float epsilon = 0.0001f;
-        if (sliceX >= leftVisible - epsilon && sliceX <= rightVisible + epsilon) {
-            // Calculate shift amount
-            float offsetPixels = currentSlice->shiftAmount *
-                currentSlice->shiftRandomFactor *
-                currentSlice->shiftDirection;
-
-            // FIXED: Apply shift in world space, perpendicular to slice angle
-            // First calculate the perpendicular direction in slice space (always vertical)
-            float sliceShiftX = 0.0f;  // No horizontal shift in slice space
-            float sliceShiftY = 1.0f;  // Pure vertical shift in slice space
-
-            // Rotate the shift direction to world space
-            float worldShiftX = sliceShiftX;
-            float worldShiftY = sliceShiftY;
-            // Use positive angle for forward rotation
-            RotatePoint(0, 0, worldShiftX, worldShiftY, angleCos, angleSin);
-
-            // Apply the shift to get source pixel coordinates
-            float srcX = x + worldShiftX * offsetPixels;
-            float srcY = y + worldShiftY * offsetPixels;
-
-            // Get the source pixel
-            PF_Pixel srcPixel = GetSourcePixel(srcX, srcY, currentSlice);
-
-            // Use this pixel if it's not fully transparent
-            if (srcPixel.alpha > 0) {
-                *out = srcPixel;
-                return err;
-            }
+    for (A_long s = 0; s < sampleCount; ++s) {
+        const float offsetX = useAA ? kAASampleOffsets[s][0] : 0.0f;
+        const float offsetY = useAA ? kAASampleOffsets[s][1] : 0.0f;
+        PF_Pixel samplePixel = { 0, 0, 0, 0 };
+        if (SampleSlicePoint8(ctx, baseX + offsetX, baseY + offsetY, &samplePixel)) {
+            accumA += samplePixel.alpha;
+            accumR += samplePixel.red;
+            accumG += samplePixel.green;
+            accumB += samplePixel.blue;
         }
     }
+
+    if (sampleCount == 0) {
+        return err;
+    }
+
+    const float invSamples = 1.0f / static_cast<float>(sampleCount);
+    out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumA * invSamples + 0.5f)));
+    out->red = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumR * invSamples + 0.5f)));
+    out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumG * invSamples + 0.5f)));
+    out->blue = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumB * invSamples + 0.5f)));
 
     return err;
 }
@@ -380,79 +445,42 @@ ProcessMultiSlice16(
     PF_Pixel16* out)
 {
     PF_Err err = PF_Err_NONE;
-    SliceInfo* sliceInfosArray = (SliceInfo*)refcon;
-
-    // Check if we're in identity mode
-    if (sliceInfosArray[0].shiftAmount < 0.001f && sliceInfosArray[0].widthScale > 0.9999f) {
-        *out = *in;
+    const SliceContext* ctx = reinterpret_cast<const SliceContext*>(refcon);
+    if (!ctx) {
         return err;
     }
 
-    // Start with transparent pixel
-    out->alpha = 0;
-    out->red = 0;
-    out->green = 0;
-    out->blue = 0;
+    const bool useAA = ctx->useAntialias;
+    const A_long sampleCount = useAA ? kAASampleCount : 1;
+    const float baseX = static_cast<float>(x);
+    const float baseY = static_cast<float>(y);
 
-    // Get composition center from first slice
-    float centerX = sliceInfosArray[0].centerX;
-    float centerY = sliceInfosArray[0].centerY;
-    float angleCos = sliceInfosArray[0].angleCos;
-    float angleSin = sliceInfosArray[0].angleSin;
+    float accumA = 0.0f;
+    float accumR = 0.0f;
+    float accumG = 0.0f;
+    float accumB = 0.0f;
 
-    // FIXED: First rotate the pixel coordinates in the inverse direction
-    // This transforms from world space to slice space
-    float sliceX = x;
-    float sliceY = y;
-    // Use negative angle for inverse rotation
-    RotatePoint(centerX, centerY, sliceX, sliceY, angleCos, -angleSin);
-
-    // Check which slice this pixel belongs to
-    for (int i = 0; i < sliceInfosArray[0].numSlices; i++) {
-        SliceInfo* currentSlice = &sliceInfosArray[i];
-
-        // Skip slices with zero width
-        if (currentSlice->widthScale <= 0.001f) continue;
-
-        // Calculate slice boundaries in horizontal space
-        float sliceCenter = currentSlice->sliceStart + (currentSlice->sliceWidth / 2.0f);
-        float halfVisibleWidth = (currentSlice->sliceWidth / 2.0f) * currentSlice->widthScale;
-        float leftVisible = sliceCenter - halfVisibleWidth;
-        float rightVisible = sliceCenter + halfVisibleWidth;
-
-        // Check if the rotated point is within the horizontal slice
-        const float epsilon = 0.0001f;
-        if (sliceX >= leftVisible - epsilon && sliceX <= rightVisible + epsilon) {
-            // Calculate shift amount
-            float offsetPixels = currentSlice->shiftAmount *
-                currentSlice->shiftRandomFactor *
-                currentSlice->shiftDirection;
-
-            // FIXED: Apply shift in world space, perpendicular to slice angle
-            // First calculate the perpendicular direction in slice space (always vertical)
-            float sliceShiftX = 0.0f;  // No horizontal shift in slice space
-            float sliceShiftY = 1.0f;  // Pure vertical shift in slice space
-
-            // Rotate the shift direction to world space
-            float worldShiftX = sliceShiftX;
-            float worldShiftY = sliceShiftY;
-            // Use positive angle for forward rotation
-            RotatePoint(0, 0, worldShiftX, worldShiftY, angleCos, angleSin);
-
-            // Apply the shift to get source pixel coordinates
-            float srcX = x + worldShiftX * offsetPixels;
-            float srcY = y + worldShiftY * offsetPixels;
-
-            // Get the source pixel
-            PF_Pixel16 srcPixel = GetSourcePixel16(srcX, srcY, currentSlice);
-
-            // Use this pixel if it's not fully transparent
-            if (srcPixel.alpha > 0) {
-                *out = srcPixel;
-                return err;
-            }
+    for (A_long s = 0; s < sampleCount; ++s) {
+        const float offsetX = useAA ? kAASampleOffsets[s][0] : 0.0f;
+        const float offsetY = useAA ? kAASampleOffsets[s][1] : 0.0f;
+        PF_Pixel16 samplePixel = { 0, 0, 0, 0 };
+        if (SampleSlicePoint16(ctx, baseX + offsetX, baseY + offsetY, &samplePixel)) {
+            accumA += static_cast<float>(samplePixel.alpha);
+            accumR += static_cast<float>(samplePixel.red);
+            accumG += static_cast<float>(samplePixel.green);
+            accumB += static_cast<float>(samplePixel.blue);
         }
     }
+
+    if (sampleCount == 0) {
+        return err;
+    }
+
+    const float invSamples = 1.0f / static_cast<float>(sampleCount);
+    out->alpha = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumA * invSamples + 0.5f)));
+    out->red = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumR * invSamples + 0.5f)));
+    out->green = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumG * invSamples + 0.5f)));
+    out->blue = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumB * invSamples + 0.5f)));
 
     return err;
 }
@@ -478,19 +506,15 @@ Render(
     A_long angle_long = params[MULTISLICER_ANGLE]->u.ad.value >> 16;
     A_long seed = params[MULTISLICER_SEED]->u.sd.value;
 
-    // Ensure at least 1 slice
     numSlices = MAX(1, numSlices);
 
-    // Determine shift direction based on sign
     float shiftDirection = (shiftRaw >= 0) ? 1.0f : -1.0f;
 
-    // Calculate downsampling factors
     float downsize_x = static_cast<float>(in_data->downsample_x.den) / static_cast<float>(in_data->downsample_x.num);
     float downsize_y = static_cast<float>(in_data->downsample_y.den) / static_cast<float>(in_data->downsample_y.num);
     float resolution_factor = min(downsize_x, downsize_y);
     float shiftAmount = fabsf(shiftRaw) / resolution_factor;
 
-    // Fast path for identity or single slice case
     if ((shiftAmount < 0.001f && fabsf(width - 0.9999f) < 0.0001f) || numSlices <= 1) {
         ERR(suites.WorldTransformSuite1()->copy_hq(
             in_data->effect_ref,
@@ -501,99 +525,76 @@ Render(
         return err;
     }
 
-    // Get image dimensions
     A_long imageWidth = inputP->width;
     A_long imageHeight = inputP->height;
-    
-    // Anchor point is delivered as 16.16 fixed-point layer coordinates
+
     float centerX = static_cast<float>(anchor_x) / 65536.0f;
     float centerY = static_cast<float>(anchor_y) / 65536.0f;
-
-    // Clamp inside the current layer bounds to avoid wobble near edges
     centerX = MAX(0.0f, MIN(centerX, static_cast<float>(imageWidth - 1)));
     centerY = MAX(0.0f, MIN(centerY, static_cast<float>(imageHeight - 1)));
 
-    // Calculate angle in radians
     float angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
     float angleCos = cosf(angleRad);
     float angleSin = sinf(angleRad);
+    float sliceLength = 2.0f * sqrtf(static_cast<float>(imageWidth * imageWidth + imageHeight * imageHeight));
 
-    // FIXED: Calculate slice length based on the maximum dimension of the composition
-    // This ensures slices are long enough regardless of angle
-    float sliceLength = 2.0f * sqrtf(imageWidth * imageWidth + imageHeight * imageHeight);
-
-    // Create slice info array
-    PF_Handle sliceInfosHandle = suites.HandleSuite1()->host_new_handle(numSlices * sizeof(SliceInfo));
-    if (!sliceInfosHandle) {
+    PF_Handle segmentsHandle = suites.HandleSuite1()->host_new_handle(numSlices * sizeof(SliceSegment));
+    if (!segmentsHandle) {
         return PF_Err_OUT_OF_MEMORY;
     }
-    SliceInfo* sliceInfos = *((SliceInfo**)sliceInfosHandle);
-    if (!sliceInfos) {
-        suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
+    SliceSegment* segments = *((SliceSegment**)segmentsHandle);
+    if (!segments) {
+        suites.HandleSuite1()->host_dispose_handle(segmentsHandle);
         return PF_Err_OUT_OF_MEMORY;
     }
 
-    // Create dividing points
     PF_Handle divPointsHandle = suites.HandleSuite1()->host_new_handle((numSlices + 1) * sizeof(float));
     if (!divPointsHandle) {
-        suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
+        suites.HandleSuite1()->host_dispose_handle(segmentsHandle);
         return PF_Err_OUT_OF_MEMORY;
     }
     float* divPoints = *((float**)divPointsHandle);
     if (!divPoints) {
         suites.HandleSuite1()->host_dispose_handle(divPointsHandle);
-        suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
+        suites.HandleSuite1()->host_dispose_handle(segmentsHandle);
         return PF_Err_OUT_OF_MEMORY;
     }
 
-    // FIXED: Define slice boundaries in a horizontal orientation
     divPoints[0] = -sliceLength / 2.0f;
     divPoints[numSlices] = sliceLength / 2.0f;
 
-    // Generate a baseline offset
     float baselineOffset = (GetRandomValue(seed, 12345) - 0.5f) * sliceLength * 0.1f;
     float avgSpacing = sliceLength / numSlices;
 
     if (numSlices > 1) {
-        // Generate initial division points
         for (A_long i = 1; i < numSlices; i++) {
             divPoints[i] = divPoints[0] + (i * avgSpacing);
         }
 
-        // Add randomization for varied slice widths
         for (A_long i = 1; i < numSlices; i++) {
             float baseRandom = GetRandomValue(seed, i * 3779 + 2971);
-
-            // Create a mix of small and large slices
             float randomFactor;
             if (baseRandom < 0.7f) {
-                // Smaller slice (0.2 to 0.9 of normal size)
                 randomFactor = 0.2f + (baseRandom / 0.7f) * 0.7f;
             }
             else {
-                // Larger slice (1.0 to 1.8 of normal size)
                 randomFactor = 1.0f + ((baseRandom - 0.7f) / 0.3f) * 0.8f;
             }
 
-            // Apply randomization
             float offset = (randomFactor - 1.0f) * avgSpacing;
             divPoints[i] += offset + baselineOffset;
         }
 
-        // Sort points to ensure they're strictly increasing
         for (A_long i = 1; i < numSlices; i++) {
             float key = divPoints[i];
             A_long j = i - 1;
-
             while (j >= 0 && divPoints[j] > key) {
                 divPoints[j + 1] = divPoints[j];
                 j--;
             }
-
             divPoints[j + 1] = key;
         }
 
-        // Ensure minimum spacing
         float minSpacing = avgSpacing * 0.05f;
         for (A_long i = 1; i < numSlices; i++) {
             if (divPoints[i] < divPoints[i - 1] + minSpacing) {
@@ -601,7 +602,6 @@ Render(
             }
         }
 
-        // Normalize to full range
         if (divPoints[numSlices - 1] < divPoints[numSlices] - minSpacing) {
             float actualRange = divPoints[numSlices - 1] - divPoints[0];
             float targetRange = divPoints[numSlices] - divPoints[0];
@@ -613,7 +613,6 @@ Render(
                 }
             }
             else {
-                // Distribute evenly if range is too small
                 for (A_long i = 1; i < numSlices; i++) {
                     divPoints[i] = divPoints[0] + (i * targetRange / numSlices);
                 }
@@ -621,39 +620,43 @@ Render(
         }
     }
 
-    // Fill slice info array
     for (A_long i = 0; i < numSlices; i++) {
-        // Basic information
-        sliceInfos[i].srcData = inputP->data;
-        sliceInfos[i].rowbytes = inputP->rowbytes;
-        sliceInfos[i].width = imageWidth;
-        sliceInfos[i].height = imageHeight;
-        sliceInfos[i].centerX = centerX;
-        sliceInfos[i].centerY = centerY;
-        sliceInfos[i].angleCos = angleCos;
-        sliceInfos[i].angleSin = angleSin;
-        sliceInfos[i].numSlices = numSlices;
-        sliceInfos[i].widthScale = width;
-        sliceInfos[i].shiftAmount = shiftAmount;
+        SliceSegment& segment = segments[i];
+        segment.sliceStart = divPoints[i];
+        segment.sliceEnd = divPoints[i + 1];
+        float sliceWidth = segment.sliceEnd - segment.sliceStart;
+        float sliceCenter = segment.sliceStart + (sliceWidth * 0.5f);
+        float halfVisible = MAX(0.0f, sliceWidth * width * 0.5f);
+        segment.visibleStart = sliceCenter - halfVisible;
+        segment.visibleEnd = sliceCenter + halfVisible;
 
-        // Set slice properties
-        sliceInfos[i].sliceStart = divPoints[i];
-        sliceInfos[i].sliceWidth = divPoints[i + 1] - divPoints[i];
-
-        // Random shift properties
         A_long dirSeed = (seed * 17 + i * 31) & 0x7FFF;
         A_long factorSeed = (seed * 23 + i * 41) & 0x7FFF;
         float randomDir = (GetRandomValue(dirSeed, 0) > 0.5f) ? 1.0f : -1.0f;
         float randomShiftFactor = 0.5f + GetRandomValue(factorSeed, 0) * 1.5f;
 
-        sliceInfos[i].shiftDirection = shiftDirection * randomDir;
-        sliceInfos[i].shiftRandomFactor = randomShiftFactor;
+        segment.shiftDirection = shiftDirection * randomDir;
+        segment.shiftRandomFactor = randomShiftFactor;
     }
 
-    // Free division points
     suites.HandleSuite1()->host_dispose_handle(divPointsHandle);
 
-    // Process the image
+    SliceContext context = {};
+    context.srcData = inputP->data;
+    context.rowbytes = inputP->rowbytes;
+    context.width = imageWidth;
+    context.height = imageHeight;
+    context.centerX = centerX;
+    context.centerY = centerY;
+    context.angleCos = angleCos;
+    context.angleSin = angleSin;
+    context.shiftDirX = -angleSin;
+    context.shiftDirY = angleCos;
+    context.shiftAmount = shiftAmount;
+    context.numSlices = numSlices;
+    context.segments = segments;
+    context.useAntialias = true;
+
     if (PF_WORLD_IS_DEEP(inputP)) {
         ERR(suites.Iterate16Suite1()->iterate(
             in_data,
@@ -661,7 +664,7 @@ Render(
             imageHeight,
             inputP,
             NULL,
-            (void*)sliceInfos,
+            (void*)&context,
             ProcessMultiSlice16,
             outputP));
     }
@@ -672,13 +675,12 @@ Render(
             imageHeight,
             inputP,
             NULL,
-            (void*)sliceInfos,
+            (void*)&context,
             ProcessMultiSlice,
             outputP));
     }
 
-    // Free slice info array
-    suites.HandleSuite1()->host_dispose_handle(sliceInfosHandle);
+    suites.HandleSuite1()->host_dispose_handle(segmentsHandle);
 
     return err;
 }

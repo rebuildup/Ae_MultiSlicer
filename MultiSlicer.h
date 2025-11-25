@@ -73,7 +73,17 @@ enum {
     SEED_DISK_ID
 };
 
-// Structure for slice information
+// Slice metadata describing each horizontal band in slice space
+typedef struct {
+    float sliceStart;
+    float sliceEnd;
+    float visibleStart;
+    float visibleEnd;
+    float shiftDirection;
+    float shiftRandomFactor;
+} SliceSegment;
+
+// Context shared across iterate callbacks
 typedef struct {
     void* srcData;
     A_long rowbytes;
@@ -83,14 +93,13 @@ typedef struct {
     float centerY;
     float angleCos;
     float angleSin;
-    int numSlices;
-    float widthScale;
+    float shiftDirX;
+    float shiftDirY;
     float shiftAmount;
-    float sliceStart;
-    float sliceWidth;
-    float shiftDirection;
-    float shiftRandomFactor;
-} SliceInfo;
+    A_long numSlices;
+    const SliceSegment* segments;
+    bool useAntialias;
+} SliceContext;
 
 extern "C" {
     DllExport
