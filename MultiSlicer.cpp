@@ -570,10 +570,10 @@ Render(
 
     float downsize_x = static_cast<float>(in_data->downsample_x.den) / static_cast<float>(in_data->downsample_x.num);
     float downsize_y = static_cast<float>(in_data->downsample_y.den) / static_cast<float>(in_data->downsample_y.num);
-    float resolution_factor = std::min(downsize_x, downsize_y);
+    float resolution_factor = MIN(downsize_x, downsize_y);
     float shiftAmount = fabsf(shiftRaw) / MAX(0.0001f, resolution_factor);
-    float pixelSpan = std::max(downsize_x, downsize_y);
-    float featherWidth = 0.70710678f * std::max(0.5f, pixelSpan);
+    float pixelSpan = MAX(downsize_x, downsize_y);
+    float featherWidth = 0.70710678f * MAX(0.5f, pixelSpan);
 
     if ((shiftAmount < 0.001f && fabsf(width - 0.9999f) < 0.0001f) || numSlices <= 1) {
         ERR(suites.WorldTransformSuite1()->copy_hq(
