@@ -360,7 +360,9 @@ static inline void AddWeightedPixel16(
     accumB += weight * static_cast<float>(sample.blue);
 }
 
-static inline A_long FindSliceFloorIndex(const SliceContext* ctx, float sliceX)
+// Binary search to find the slice whose [sliceStart, sliceEnd]
+// range contains the given slice-space coordinate.
+static inline A_long FindSliceIndex(const SliceContext* ctx, float sliceX)
 {
     if (!ctx || ctx->numSlices <= 0) {
         return -1;
@@ -368,20 +370,23 @@ static inline A_long FindSliceFloorIndex(const SliceContext* ctx, float sliceX)
 
     A_long low = 0;
     A_long high = ctx->numSlices - 1;
-    A_long result = -1;
 
     while (low <= high) {
         A_long mid = (low + high) >> 1;
-        if (sliceX >= ctx->segments[mid].sliceStart) {
-            result = mid;
+        const SliceSegment& seg = ctx->segments[mid];
+
+        if (sliceX < seg.sliceStart) {
+            high = mid - 1;
+        }
+        else if (sliceX > seg.sliceEnd) {
             low = mid + 1;
         }
         else {
-            high = mid - 1;
+            return mid;
         }
     }
 
-    return result;
+    return -1;
 }
 
 static PF_Err
@@ -395,7 +400,7 @@ ProcessMultiSlice(
     PF_Err err = PF_Err_NONE;
     const SliceContext* ctx = reinterpret_cast<const SliceContext*>(refcon);
     if (!ctx || ctx->numSlices <= 0) {
-        *out = *in;
+        out->alpha = out->red = out->green = out->blue = 0;
         return err;
     }
 
@@ -405,60 +410,28 @@ ProcessMultiSlice(
     float sliceY = worldY;
     RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos, -ctx->angleSin);
 
-    A_long candidates[3] = { -1, -1, -1 };
-    int candidateCount = 0;
-    A_long baseIdx = FindSliceFloorIndex(ctx, sliceX);
-
-    if (baseIdx < 0) {
-        if (ctx->numSlices > 0) {
-            candidates[candidateCount++] = 0;
-        }
-        if (ctx->numSlices > 1 && candidateCount < 3) {
-            candidates[candidateCount++] = 1;
-        }
-    }
-    else {
-        candidates[candidateCount++] = baseIdx;
-        if (baseIdx - 1 >= 0 && candidateCount < 3) {
-            candidates[candidateCount++] = baseIdx - 1;
-        }
-        if (baseIdx + 1 < ctx->numSlices && candidateCount < 3) {
-            candidates[candidateCount++] = baseIdx + 1;
-        }
+    const A_long idx = FindSliceIndex(ctx, sliceX);
+    if (idx < 0) {
+        // No slice covers this coordinate: fully transparent.
+        out->alpha = out->red = out->green = out->blue = 0;
+        return err;
     }
 
-    float remaining = 1.0f;
-    float accumA = 0.0f;
-    float accumR = 0.0f;
-    float accumG = 0.0f;
-    float accumB = 0.0f;
-
-    for (int i = 0; i < candidateCount && remaining > 0.0001f; ++i) {
-        A_long idx = candidates[i];
-        if (idx < 0 || idx >= ctx->numSlices) {
-            continue;
-        }
-        const SliceSegment& segment = ctx->segments[idx];
-        float coverage = ComputeSliceCoverage(segment, sliceX, ctx->featherWidth);
-        if (coverage <= 0.0f) {
-            continue;
-        }
-
-        float applied = MIN(coverage, remaining);
-        PF_Pixel samplePixel = SampleShiftedPixel8(ctx, segment, worldX, worldY);
-        AddWeightedPixel(samplePixel, applied, accumA, accumR, accumG, accumB);
-        remaining -= applied;
+    const SliceSegment& segment = ctx->segments[idx];
+    float coverage = ComputeSliceCoverage(segment, sliceX, ctx->featherWidth);
+    if (coverage <= 0.0001f) {
+        // Outside visible band.
+        out->alpha = out->red = out->green = out->blue = 0;
+        return err;
     }
 
-    if (remaining > 0.0001f) {
-        PF_Pixel baseSample = SampleSourcePixel8(worldX, worldY, ctx);
-        AddWeightedPixel(baseSample, remaining, accumA, accumR, accumG, accumB);
-    }
+    PF_Pixel samplePixel = SampleShiftedPixel8(ctx, segment, worldX, worldY);
+    float w = MAX(0.0f, MIN(coverage, 1.0f));
 
-    out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumA + 0.5f)));
-    out->red = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumR + 0.5f)));
-    out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumG + 0.5f)));
-    out->blue = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumB + 0.5f)));
+    out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, w * samplePixel.alpha + 0.5f)));
+    out->red   = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, w * samplePixel.red   + 0.5f)));
+    out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, w * samplePixel.green + 0.5f)));
+    out->blue  = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, w * samplePixel.blue  + 0.5f)));
 
     return err;
 }
@@ -485,60 +458,27 @@ ProcessMultiSlice16(
     float sliceY = worldY;
     RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos, -ctx->angleSin);
 
-    A_long candidates[3] = { -1, -1, -1 };
-    int candidateCount = 0;
-    A_long baseIdx = FindSliceFloorIndex(ctx, sliceX);
-
-    if (baseIdx < 0) {
-        if (ctx->numSlices > 0) {
-            candidates[candidateCount++] = 0;
-        }
-        if (ctx->numSlices > 1 && candidateCount < 3) {
-            candidates[candidateCount++] = 1;
-        }
-    }
-    else {
-        candidates[candidateCount++] = baseIdx;
-        if (baseIdx - 1 >= 0 && candidateCount < 3) {
-            candidates[candidateCount++] = baseIdx - 1;
-        }
-        if (baseIdx + 1 < ctx->numSlices && candidateCount < 3) {
-            candidates[candidateCount++] = baseIdx + 1;
-        }
+    const A_long idx = FindSliceIndex(ctx, sliceX);
+    if (idx < 0) {
+        // No slice at this position: leave original pixel (for alpha continuity).
+        *out = *in;
+        return err;
     }
 
-    float remaining = 1.0f;
-    float accumA = 0.0f;
-    float accumR = 0.0f;
-    float accumG = 0.0f;
-    float accumB = 0.0f;
-
-    for (int i = 0; i < candidateCount && remaining > 0.0001f; ++i) {
-        A_long idx = candidates[i];
-        if (idx < 0 || idx >= ctx->numSlices) {
-            continue;
-        }
-        const SliceSegment& segment = ctx->segments[idx];
-        float coverage = ComputeSliceCoverage(segment, sliceX, ctx->featherWidth);
-        if (coverage <= 0.0f) {
-            continue;
-        }
-
-        float applied = MIN(coverage, remaining);
-        PF_Pixel16 samplePixel = SampleShiftedPixel16(ctx, segment, worldX, worldY);
-        AddWeightedPixel16(samplePixel, applied, accumA, accumR, accumG, accumB);
-        remaining -= applied;
+    const SliceSegment& segment = ctx->segments[idx];
+    float coverage = ComputeSliceCoverage(segment, sliceX, ctx->featherWidth);
+    if (coverage <= 0.0001f) {
+        *out = *in;
+        return err;
     }
 
-    if (remaining > 0.0001f) {
-        PF_Pixel16 baseSample = SampleSourcePixel16(worldX, worldY, ctx);
-        AddWeightedPixel16(baseSample, remaining, accumA, accumR, accumG, accumB);
-    }
+    PF_Pixel16 samplePixel = SampleShiftedPixel16(ctx, segment, worldX, worldY);
+    float w = MAX(0.0f, MIN(coverage, 1.0f));
 
-    out->alpha = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumA + 0.5f)));
-    out->red = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumR + 0.5f)));
-    out->green = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumG + 0.5f)));
-    out->blue = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumB + 0.5f)));
+    out->alpha = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, w * samplePixel.alpha + 0.5f)));
+    out->red   = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, w * samplePixel.red   + 0.5f)));
+    out->green = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, w * samplePixel.green + 0.5f)));
+    out->blue  = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, w * samplePixel.blue  + 0.5f)));
 
     return err;
 }
