@@ -448,7 +448,7 @@ ProcessMultiSlice16(
     PF_Err err = PF_Err_NONE;
     const SliceContext* ctx = reinterpret_cast<const SliceContext*>(refcon);
     if (!ctx || ctx->numSlices <= 0) {
-        *out = *in;
+        out->alpha = out->red = out->green = out->blue = 0;
         return err;
     }
 
@@ -460,15 +460,14 @@ ProcessMultiSlice16(
 
     const A_long idx = FindSliceIndex(ctx, sliceX);
     if (idx < 0) {
-        // No slice at this position: leave original pixel (for alpha continuity).
-        *out = *in;
+        out->alpha = out->red = out->green = out->blue = 0;
         return err;
     }
 
     const SliceSegment& segment = ctx->segments[idx];
     float coverage = ComputeSliceCoverage(segment, sliceX, ctx->featherWidth);
     if (coverage <= 0.0001f) {
-        *out = *in;
+        out->alpha = out->red = out->green = out->blue = 0;
         return err;
     }
 
@@ -655,7 +654,7 @@ Render(
     context.shiftAmount = shiftAmount;
     context.numSlices = numSlices;
     context.segments = segments;
-    context.featherWidth = featherWidth;
+    context.featherWidth = (width >= 0.999f) ? 0.0f : featherWidth;
 
     if (PF_WORLD_IS_DEEP(inputP)) {
         ERR(suites.Iterate16Suite1()->iterate(
