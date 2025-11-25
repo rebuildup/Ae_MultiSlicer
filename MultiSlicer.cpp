@@ -37,6 +37,16 @@
 #include <math.h>
 #include <algorithm>
 
+static inline float GetDownscaleFactor(const PF_RationalScale& scale)
+{
+    if (scale.den == 0) {
+        return 1.0f;
+    }
+
+    float value = static_cast<float>(scale.num) / static_cast<float>(scale.den);
+    return (value > 0.0f) ? value : 1.0f;
+}
+
 static PF_Err
 About(
     PF_InData* in_data,
@@ -418,6 +428,11 @@ ProcessMultiSlice(
     }
 
     const SliceSegment& segment = ctx->segments[idx];
+    if (ctx->fullWidth) {
+        PF_Pixel samplePixel = SampleShiftedPixel8(ctx, segment, worldX, worldY);
+        *out = samplePixel;
+        return err;
+    }
     float coverage = ComputeSliceCoverage(segment, sliceX, ctx->featherWidth);
     if (coverage <= 0.0001f) {
         // Outside visible band.
@@ -465,6 +480,11 @@ ProcessMultiSlice16(
     }
 
     const SliceSegment& segment = ctx->segments[idx];
+    if (ctx->fullWidth) {
+        PF_Pixel16 samplePixel = SampleShiftedPixel16(ctx, segment, worldX, worldY);
+        *out = samplePixel;
+        return err;
+    }
     float coverage = ComputeSliceCoverage(segment, sliceX, ctx->featherWidth);
     if (coverage <= 0.0001f) {
         out->alpha = out->red = out->green = out->blue = 0;
@@ -507,12 +527,12 @@ Render(
 
     float shiftDirection = (shiftRaw >= 0) ? 1.0f : -1.0f;
 
-    float downsize_x = static_cast<float>(in_data->downsample_x.den) / static_cast<float>(in_data->downsample_x.num);
-    float downsize_y = static_cast<float>(in_data->downsample_y.den) / static_cast<float>(in_data->downsample_y.num);
-    float resolution_factor = MIN(downsize_x, downsize_y);
-    float shiftAmount = fabsf(shiftRaw) / MAX(0.0001f, resolution_factor);
-    float pixelSpan = MAX(downsize_x, downsize_y);
-    float featherWidth = 0.70710678f * MAX(0.5f, pixelSpan);
+    float downscale_x = GetDownscaleFactor(in_data->downsample_x);
+    float downscale_y = GetDownscaleFactor(in_data->downsample_y);
+    float resolution_scale = MIN(downscale_x, downscale_y);
+    float shiftAmount = fabsf(shiftRaw) * resolution_scale;
+    float pixelSpan = MAX(0.001f, resolution_scale);
+    float featherWidth = 0.70710678f * pixelSpan;
 
     if ((shiftAmount < 0.001f && fabsf(width - 0.9999f) < 0.0001f) || numSlices <= 1) {
         ERR(suites.WorldTransformSuite1()->copy_hq(
@@ -654,7 +674,9 @@ Render(
     context.shiftAmount = shiftAmount;
     context.numSlices = numSlices;
     context.segments = segments;
-    context.featherWidth = (width >= 0.999f) ? 0.0f : featherWidth;
+    bool fullWidth = (width >= 0.999f);
+    context.featherWidth = fullWidth ? 0.0f : featherWidth;
+    context.fullWidth = fullWidth;
 
     if (PF_WORLD_IS_DEEP(inputP)) {
         ERR(suites.Iterate16Suite1()->iterate(
