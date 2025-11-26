@@ -99,7 +99,6 @@ typedef struct {
     A_long numSlices;
     const SliceSegment* segments;
     float pixelSpan;
-    bool fullWidth;
 } SliceContext;
 
 extern "C" {

@@ -368,21 +368,17 @@ static inline A_long FindSliceIndex(const SliceContext* ctx, float sliceX)
     return -1;
 }
 
-static inline bool GetOverlapInfo(
+static inline bool ComputeOverlap(
     const SliceSegment& segment,
-    float sliceX,
-    float pixelSpan,
+    float pixelStart,
+    float pixelEnd,
     float& overlapCenter,
     float& coverage)
 {
-    if (pixelSpan <= 1e-5f || segment.visibleEnd <= segment.visibleStart) {
+    if (segment.visibleEnd <= segment.visibleStart) {
         coverage = 0.0f;
         return false;
     }
-
-    float halfSpan = pixelSpan * 0.5f;
-    float pixelStart = sliceX - halfSpan;
-    float pixelEnd = sliceX + halfSpan;
 
     float overlapStart = MAX(pixelStart, segment.visibleStart);
     float overlapEnd = MIN(pixelEnd, segment.visibleEnd);
@@ -393,6 +389,11 @@ static inline bool GetOverlapInfo(
     }
 
     float overlapWidth = overlapEnd - overlapStart;
+    float pixelSpan = pixelEnd - pixelStart;
+    if (pixelSpan <= 1e-5f) {
+        coverage = 0.0f;
+        return false;
+    }
     overlapCenter = (overlapStart + overlapEnd) * 0.5f;
     coverage = MIN(1.0f, MAX(0.0f, overlapWidth / pixelSpan));
     return true;
@@ -426,30 +427,56 @@ ProcessMultiSlice(
         return err;
     }
 
-    const SliceSegment& segment = ctx->segments[idx];
-    if (ctx->fullWidth) {
-        *out = SampleShiftedPixel8(ctx, segment, worldX, worldY);
-        return err;
+    float halfSpan = ctx->pixelSpan * 0.5f;
+    float pixelStart = sliceX - halfSpan;
+    float pixelEnd = sliceX + halfSpan;
+
+    float accumA = 0.0f;
+    float accumR = 0.0f;
+    float accumG = 0.0f;
+    float accumB = 0.0f;
+    float accumWeight = 0.0f;
+
+    auto accumulateSlice = [&](A_long sliceIdx) {
+        if (sliceIdx < 0 || sliceIdx >= ctx->numSlices) {
+            return;
+        }
+        const SliceSegment& seg = ctx->segments[sliceIdx];
+        float overlapCenter = 0.0f;
+        float coverage = 0.0f;
+        if (!ComputeOverlap(seg, pixelStart, pixelEnd, overlapCenter, coverage) || coverage <= 0.0001f) {
+            return;
+        }
+
+        float axisDelta = overlapCenter - sliceX;
+        float sampleWorldX = worldX + axisDelta * ctx->angleCos;
+        float sampleWorldY = worldY + axisDelta * ctx->angleSin;
+
+        PF_Pixel samplePixel = SampleShiftedPixel8(ctx, seg, sampleWorldX, sampleWorldY);
+        accumA += coverage * samplePixel.alpha;
+        accumR += coverage * samplePixel.red;
+        accumG += coverage * samplePixel.green;
+        accumB += coverage * samplePixel.blue;
+        accumWeight += coverage;
+    };
+
+    accumulateSlice(idx);
+    if (pixelStart < ctx->segments[idx].visibleStart) {
+        accumulateSlice(idx - 1);
+    }
+    if (pixelEnd > ctx->segments[idx].visibleEnd) {
+        accumulateSlice(idx + 1);
     }
 
-    float overlapCenter = 0.0f;
-    float coverage = 0.0f;
-    if (!GetOverlapInfo(segment, sliceX, ctx->pixelSpan, overlapCenter, coverage) || coverage <= 0.0001f) {
+    if (accumWeight <= 0.0001f) {
         out->alpha = out->red = out->green = out->blue = 0;
         return err;
     }
 
-    float axisDelta = overlapCenter - sliceX;
-    float sampleWorldX = worldX + axisDelta * ctx->angleCos;
-    float sampleWorldY = worldY + axisDelta * ctx->angleSin;
-
-    PF_Pixel samplePixel = SampleShiftedPixel8(ctx, segment, sampleWorldX, sampleWorldY);
-    float w = MAX(0.0f, MIN(coverage, 1.0f));
-
-    out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, w * samplePixel.alpha + 0.5f)));
-    out->red   = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, w * samplePixel.red   + 0.5f)));
-    out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, w * samplePixel.green + 0.5f)));
-    out->blue  = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, w * samplePixel.blue  + 0.5f)));
+    out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumA + 0.5f)));
+    out->red   = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumR + 0.5f)));
+    out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumG + 0.5f)));
+    out->blue  = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumB + 0.5f)));
 
     return err;
 }
@@ -482,30 +509,56 @@ ProcessMultiSlice16(
         return err;
     }
 
-    const SliceSegment& segment = ctx->segments[idx];
-    if (ctx->fullWidth) {
-        *out = SampleShiftedPixel16(ctx, segment, worldX, worldY);
-        return err;
+    float halfSpan16 = ctx->pixelSpan * 0.5f;
+    float pixelStart16 = sliceX - halfSpan16;
+    float pixelEnd16 = sliceX + halfSpan16;
+
+    float accumA16 = 0.0f;
+    float accumR16 = 0.0f;
+    float accumG16 = 0.0f;
+    float accumB16 = 0.0f;
+    float accumWeight16 = 0.0f;
+
+    auto accumulateSlice16 = [&](A_long sliceIdx) {
+        if (sliceIdx < 0 || sliceIdx >= ctx->numSlices) {
+            return;
+        }
+        const SliceSegment& seg = ctx->segments[sliceIdx];
+        float overlapCenter = 0.0f;
+        float coverage = 0.0f;
+        if (!ComputeOverlap(seg, pixelStart16, pixelEnd16, overlapCenter, coverage) || coverage <= 0.0001f) {
+            return;
+        }
+
+        float axisDelta = overlapCenter - sliceX;
+        float sampleWorldX = worldX + axisDelta * ctx->angleCos;
+        float sampleWorldY = worldY + axisDelta * ctx->angleSin;
+
+        PF_Pixel16 samplePixel = SampleShiftedPixel16(ctx, seg, sampleWorldX, sampleWorldY);
+        accumA16 += coverage * static_cast<float>(samplePixel.alpha);
+        accumR16 += coverage * static_cast<float>(samplePixel.red);
+        accumG16 += coverage * static_cast<float>(samplePixel.green);
+        accumB16 += coverage * static_cast<float>(samplePixel.blue);
+        accumWeight16 += coverage;
+    };
+
+    accumulateSlice16(idx);
+    if (pixelStart16 < ctx->segments[idx].visibleStart) {
+        accumulateSlice16(idx - 1);
+    }
+    if (pixelEnd16 > ctx->segments[idx].visibleEnd) {
+        accumulateSlice16(idx + 1);
     }
 
-    float overlapCenter = 0.0f;
-    float coverage = 0.0f;
-    if (!GetOverlapInfo(segment, sliceX, ctx->pixelSpan, overlapCenter, coverage) || coverage <= 0.0001f) {
+    if (accumWeight16 <= 0.0001f) {
         out->alpha = out->red = out->green = out->blue = 0;
         return err;
     }
 
-    float axisDelta = overlapCenter - sliceX;
-    float sampleWorldX = worldX + axisDelta * ctx->angleCos;
-    float sampleWorldY = worldY + axisDelta * ctx->angleSin;
-
-    PF_Pixel16 samplePixel = SampleShiftedPixel16(ctx, segment, sampleWorldX, sampleWorldY);
-    float w = MAX(0.0f, MIN(coverage, 1.0f));
-
-    out->alpha = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, w * samplePixel.alpha + 0.5f)));
-    out->red   = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, w * samplePixel.red   + 0.5f)));
-    out->green = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, w * samplePixel.green + 0.5f)));
-    out->blue  = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, w * samplePixel.blue  + 0.5f)));
+    out->alpha = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumA16 + 0.5f)));
+    out->red   = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumR16 + 0.5f)));
+    out->green = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumG16 + 0.5f)));
+    out->blue  = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumB16 + 0.5f)));
 
     return err;
 }
@@ -682,8 +735,6 @@ Render(
     context.segments = segments;
     float axisSpan = fabsf(angleCos) + fabsf(angleSin);
     float pixelSpan = MAX(1e-3f, resolution_scale * axisSpan);
-    bool fullWidth = (width >= 0.999f);
-    context.fullWidth = fullWidth;
     context.pixelSpan = pixelSpan;
 
     if (PF_WORLD_IS_DEEP(inputP)) {
