@@ -287,37 +287,6 @@ static void RotatePoint(
     y = newY;
 }
 
-static inline float ComputeEdgeWeight(float dist, float feather)
-{
-    if (feather <= 0.0f) {
-        return (dist >= 0.0f) ? 1.0f : 0.0f;
-    }
-
-    if (dist <= -feather) {
-        return 0.0f;
-    }
-    if (dist >= feather) {
-        return 1.0f;
-    }
-
-    return 0.5f + (dist / (2.0f * feather));
-}
-
-static inline float ComputeSliceCoverage(
-    const SliceSegment& segment,
-    float sliceX,
-    float feather)
-{
-    if (segment.visibleEnd <= segment.visibleStart) {
-        return 0.0f;
-    }
-
-    float startWeight = ComputeEdgeWeight(sliceX - segment.visibleStart, feather);
-    float endWeight = ComputeEdgeWeight(segment.visibleEnd - sliceX, feather);
-    float coverage = MIN(startWeight, endWeight);
-    return MAX(0.0f, MIN(coverage, 1.0f));
-}
-
 static inline PF_Pixel SampleShiftedPixel8(
     const SliceContext* ctx,
     const SliceSegment& segment,
@@ -399,6 +368,36 @@ static inline A_long FindSliceIndex(const SliceContext* ctx, float sliceX)
     return -1;
 }
 
+static inline bool GetOverlapInfo(
+    const SliceSegment& segment,
+    float sliceX,
+    float pixelSpan,
+    float& overlapCenter,
+    float& coverage)
+{
+    if (pixelSpan <= 1e-5f || segment.visibleEnd <= segment.visibleStart) {
+        coverage = 0.0f;
+        return false;
+    }
+
+    float halfSpan = pixelSpan * 0.5f;
+    float pixelStart = sliceX - halfSpan;
+    float pixelEnd = sliceX + halfSpan;
+
+    float overlapStart = MAX(pixelStart, segment.visibleStart);
+    float overlapEnd = MIN(pixelEnd, segment.visibleEnd);
+
+    if (overlapEnd <= overlapStart) {
+        coverage = 0.0f;
+        return false;
+    }
+
+    float overlapWidth = overlapEnd - overlapStart;
+    overlapCenter = (overlapStart + overlapEnd) * 0.5f;
+    coverage = MIN(1.0f, MAX(0.0f, overlapWidth / pixelSpan));
+    return true;
+}
+
 static PF_Err
 ProcessMultiSlice(
     void* refcon,
@@ -428,19 +427,18 @@ ProcessMultiSlice(
     }
 
     const SliceSegment& segment = ctx->segments[idx];
-    if (ctx->fullWidth) {
-        PF_Pixel samplePixel = SampleShiftedPixel8(ctx, segment, worldX, worldY);
-        *out = samplePixel;
-        return err;
-    }
-    float coverage = ComputeSliceCoverage(segment, sliceX, ctx->featherWidth);
-    if (coverage <= 0.0001f) {
-        // Outside visible band.
+    float overlapCenter = 0.0f;
+    float coverage = 0.0f;
+    if (!GetOverlapInfo(segment, sliceX, ctx->pixelSpan, overlapCenter, coverage) || coverage <= 0.0001f) {
         out->alpha = out->red = out->green = out->blue = 0;
         return err;
     }
 
-    PF_Pixel samplePixel = SampleShiftedPixel8(ctx, segment, worldX, worldY);
+    float axisDelta = overlapCenter - sliceX;
+    float sampleWorldX = worldX + axisDelta * ctx->angleCos;
+    float sampleWorldY = worldY + axisDelta * ctx->angleSin;
+
+    PF_Pixel samplePixel = SampleShiftedPixel8(ctx, segment, sampleWorldX, sampleWorldY);
     float w = MAX(0.0f, MIN(coverage, 1.0f));
 
     out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, w * samplePixel.alpha + 0.5f)));
@@ -480,18 +478,18 @@ ProcessMultiSlice16(
     }
 
     const SliceSegment& segment = ctx->segments[idx];
-    if (ctx->fullWidth) {
-        PF_Pixel16 samplePixel = SampleShiftedPixel16(ctx, segment, worldX, worldY);
-        *out = samplePixel;
-        return err;
-    }
-    float coverage = ComputeSliceCoverage(segment, sliceX, ctx->featherWidth);
-    if (coverage <= 0.0001f) {
+    float overlapCenter = 0.0f;
+    float coverage = 0.0f;
+    if (!GetOverlapInfo(segment, sliceX, ctx->pixelSpan, overlapCenter, coverage) || coverage <= 0.0001f) {
         out->alpha = out->red = out->green = out->blue = 0;
         return err;
     }
 
-    PF_Pixel16 samplePixel = SampleShiftedPixel16(ctx, segment, worldX, worldY);
+    float axisDelta = overlapCenter - sliceX;
+    float sampleWorldX = worldX + axisDelta * ctx->angleCos;
+    float sampleWorldY = worldY + axisDelta * ctx->angleSin;
+
+    PF_Pixel16 samplePixel = SampleShiftedPixel16(ctx, segment, sampleWorldX, sampleWorldY);
     float w = MAX(0.0f, MIN(coverage, 1.0f));
 
     out->alpha = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, w * samplePixel.alpha + 0.5f)));
@@ -531,8 +529,6 @@ Render(
     float downscale_y = GetDownscaleFactor(in_data->downsample_y);
     float resolution_scale = MIN(downscale_x, downscale_y);
     float shiftAmount = fabsf(shiftRaw) * resolution_scale;
-    float pixelSpan = MAX(0.001f, resolution_scale);
-    float featherWidth = 0.70710678f * pixelSpan;
 
     if ((shiftAmount < 0.001f && fabsf(width - 0.9999f) < 0.0001f) || numSlices <= 1) {
         ERR(suites.WorldTransformSuite1()->copy_hq(
@@ -674,9 +670,9 @@ Render(
     context.shiftAmount = shiftAmount;
     context.numSlices = numSlices;
     context.segments = segments;
-    bool fullWidth = (width >= 0.999f);
-    context.featherWidth = fullWidth ? 0.0f : featherWidth;
-    context.fullWidth = fullWidth;
+    float axisSpan = fabsf(angleCos) + fabsf(angleSin);
+    float pixelSpan = MAX(1e-3f, resolution_scale * axisSpan);
+    context.pixelSpan = pixelSpan;
 
     if (PF_WORLD_IS_DEEP(inputP)) {
         ERR(suites.Iterate16Suite1()->iterate(

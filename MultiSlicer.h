@@ -98,8 +98,7 @@ typedef struct {
     float shiftAmount;
     A_long numSlices;
     const SliceSegment* segments;
-    float featherWidth;
-    bool fullWidth;
+    float pixelSpan;
 } SliceContext;
 
 extern "C" {
