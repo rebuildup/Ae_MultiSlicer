@@ -427,6 +427,11 @@ ProcessMultiSlice(
     }
 
     const SliceSegment& segment = ctx->segments[idx];
+    if (ctx->fullWidth) {
+        *out = SampleShiftedPixel8(ctx, segment, worldX, worldY);
+        return err;
+    }
+
     float overlapCenter = 0.0f;
     float coverage = 0.0f;
     if (!GetOverlapInfo(segment, sliceX, ctx->pixelSpan, overlapCenter, coverage) || coverage <= 0.0001f) {
@@ -478,6 +483,11 @@ ProcessMultiSlice16(
     }
 
     const SliceSegment& segment = ctx->segments[idx];
+    if (ctx->fullWidth) {
+        *out = SampleShiftedPixel16(ctx, segment, worldX, worldY);
+        return err;
+    }
+
     float overlapCenter = 0.0f;
     float coverage = 0.0f;
     if (!GetOverlapInfo(segment, sliceX, ctx->pixelSpan, overlapCenter, coverage) || coverage <= 0.0001f) {
@@ -672,6 +682,8 @@ Render(
     context.segments = segments;
     float axisSpan = fabsf(angleCos) + fabsf(angleSin);
     float pixelSpan = MAX(1e-3f, resolution_scale * axisSpan);
+    bool fullWidth = (width >= 0.999f);
+    context.fullWidth = fullWidth;
     context.pixelSpan = pixelSpan;
 
     if (PF_WORLD_IS_DEEP(inputP)) {
