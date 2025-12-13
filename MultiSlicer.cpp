@@ -228,14 +228,62 @@ static PF_Pixel SampleSourcePixel8(
     const float w01 = (1.0f - fx) * fy;
     const float w11 = fx * fy;
 
-    // For premultiplied alpha: interpolate color components directly
-    // Premultiplied alpha format means color components are already multiplied by alpha
-    // So we can interpolate them directly without normalization
-    // If alpha is 0, color must be 0 (already satisfied in premultiplied format)
-    result.alpha = static_cast<A_u_char>(w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha + 0.5f);
-    result.red = static_cast<A_u_char>(w00 * p00->red + w10 * p10->red + w01 * p01->red + w11 * p11->red + 0.5f);
-    result.green = static_cast<A_u_char>(w00 * p00->green + w10 * p10->green + w01 * p01->green + w11 * p11->green + 0.5f);
-    result.blue = static_cast<A_u_char>(w00 * p00->blue + w10 * p10->blue + w01 * p01->blue + w11 * p11->blue + 0.5f);
+    // Alpha-weighted bilinear interpolation to prevent color bleeding from transparent pixels
+    // AE uses premultiplied alpha, so we need to:
+    // 1. Convert to straight alpha (divide color by alpha)
+    // 2. Interpolate with alpha weighting
+    // 3. Convert back to premultiplied (multiply color by alpha)
+    float a00 = static_cast<float>(p00->alpha);
+    float a10 = static_cast<float>(p10->alpha);
+    float a01 = static_cast<float>(p01->alpha);
+    float a11 = static_cast<float>(p11->alpha);
+
+    // Interpolate alpha normally
+    float alpha = w00 * a00 + w10 * a10 + w01 * a01 + w11 * a11;
+    result.alpha = static_cast<A_u_char>(alpha + 0.5f);
+
+    if (alpha > 0.5f) {
+        // Convert premultiplied colors to straight alpha (actual RGB values)
+        // If alpha is 0, the color doesn't matter (we use 0)
+        float r00 = (a00 > 0.5f) ? (p00->red * 255.0f / a00) : 0.0f;
+        float r10 = (a10 > 0.5f) ? (p10->red * 255.0f / a10) : 0.0f;
+        float r01 = (a01 > 0.5f) ? (p01->red * 255.0f / a01) : 0.0f;
+        float r11 = (a11 > 0.5f) ? (p11->red * 255.0f / a11) : 0.0f;
+
+        float g00 = (a00 > 0.5f) ? (p00->green * 255.0f / a00) : 0.0f;
+        float g10 = (a10 > 0.5f) ? (p10->green * 255.0f / a10) : 0.0f;
+        float g01 = (a01 > 0.5f) ? (p01->green * 255.0f / a01) : 0.0f;
+        float g11 = (a11 > 0.5f) ? (p11->green * 255.0f / a11) : 0.0f;
+
+        float b00 = (a00 > 0.5f) ? (p00->blue * 255.0f / a00) : 0.0f;
+        float b10 = (a10 > 0.5f) ? (p10->blue * 255.0f / a10) : 0.0f;
+        float b01 = (a01 > 0.5f) ? (p01->blue * 255.0f / a01) : 0.0f;
+        float b11 = (a11 > 0.5f) ? (p11->blue * 255.0f / a11) : 0.0f;
+
+        // Weight by both position AND alpha to prevent transparent pixels from contributing color
+        float wa00 = w00 * a00;
+        float wa10 = w10 * a10;
+        float wa01 = w01 * a01;
+        float wa11 = w11 * a11;
+        float totalWeight = wa00 + wa10 + wa01 + wa11;
+
+        if (totalWeight > 0.001f) {
+            // Interpolate straight-alpha colors weighted by alpha
+            float r = (wa00 * r00 + wa10 * r10 + wa01 * r01 + wa11 * r11) / totalWeight;
+            float g = (wa00 * g00 + wa10 * g10 + wa01 * g01 + wa11 * g11) / totalWeight;
+            float b = (wa00 * b00 + wa10 * b10 + wa01 * b01 + wa11 * b11) / totalWeight;
+
+            // Convert back to premultiplied form (color * alpha/255)
+            float alphaNorm = alpha / 255.0f;
+            result.red = static_cast<A_u_char>(CLAMP(r * alphaNorm, 0.0f, 255.0f) + 0.5f);
+            result.green = static_cast<A_u_char>(CLAMP(g * alphaNorm, 0.0f, 255.0f) + 0.5f);
+            result.blue = static_cast<A_u_char>(CLAMP(b * alphaNorm, 0.0f, 255.0f) + 0.5f);
+        } else {
+            result.red = result.green = result.blue = 0;
+        }
+    } else {
+        result.red = result.green = result.blue = 0;
+    }
 
     return result;
 }
@@ -277,14 +325,64 @@ static PF_Pixel16 SampleSourcePixel16(
     const float w01 = (1.0f - fx) * fy;
     const float w11 = fx * fy;
 
-    // For premultiplied alpha: interpolate color components directly
-    // Premultiplied alpha format means color components are already multiplied by alpha
-    // So we can interpolate them directly without normalization
-    // If alpha is 0, color must be 0 (already satisfied in premultiplied format)
-    result.alpha = static_cast<A_u_short>(w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha + 0.5f);
-    result.red = static_cast<A_u_short>(w00 * p00->red + w10 * p10->red + w01 * p01->red + w11 * p11->red + 0.5f);
-    result.green = static_cast<A_u_short>(w00 * p00->green + w10 * p10->green + w01 * p01->green + w11 * p11->green + 0.5f);
-    result.blue = static_cast<A_u_short>(w00 * p00->blue + w10 * p10->blue + w01 * p01->blue + w11 * p11->blue + 0.5f);
+    // Alpha-weighted bilinear interpolation to prevent color bleeding from transparent pixels
+    // AE uses premultiplied alpha, so we need to:
+    // 1. Convert to straight alpha (divide color by alpha)
+    // 2. Interpolate with alpha weighting
+    // 3. Convert back to premultiplied (multiply color by alpha)
+    float a00 = static_cast<float>(p00->alpha);
+    float a10 = static_cast<float>(p10->alpha);
+    float a01 = static_cast<float>(p01->alpha);
+    float a11 = static_cast<float>(p11->alpha);
+
+    // Interpolate alpha normally
+    float alpha = w00 * a00 + w10 * a10 + w01 * a01 + w11 * a11;
+    result.alpha = static_cast<A_u_short>(alpha + 0.5f);
+
+    float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
+
+    if (alpha > 0.5f) {
+        // Convert premultiplied colors to straight alpha (actual RGB values)
+        // If alpha is 0, the color doesn't matter (we use 0)
+        float r00 = (a00 > 0.5f) ? (p00->red * maxChan16F / a00) : 0.0f;
+        float r10 = (a10 > 0.5f) ? (p10->red * maxChan16F / a10) : 0.0f;
+        float r01 = (a01 > 0.5f) ? (p01->red * maxChan16F / a01) : 0.0f;
+        float r11 = (a11 > 0.5f) ? (p11->red * maxChan16F / a11) : 0.0f;
+
+        float g00 = (a00 > 0.5f) ? (p00->green * maxChan16F / a00) : 0.0f;
+        float g10 = (a10 > 0.5f) ? (p10->green * maxChan16F / a10) : 0.0f;
+        float g01 = (a01 > 0.5f) ? (p01->green * maxChan16F / a01) : 0.0f;
+        float g11 = (a11 > 0.5f) ? (p11->green * maxChan16F / a11) : 0.0f;
+
+        float b00 = (a00 > 0.5f) ? (p00->blue * maxChan16F / a00) : 0.0f;
+        float b10 = (a10 > 0.5f) ? (p10->blue * maxChan16F / a10) : 0.0f;
+        float b01 = (a01 > 0.5f) ? (p01->blue * maxChan16F / a01) : 0.0f;
+        float b11 = (a11 > 0.5f) ? (p11->blue * maxChan16F / a11) : 0.0f;
+
+        // Weight by both position AND alpha to prevent transparent pixels from contributing color
+        float wa00 = w00 * a00;
+        float wa10 = w10 * a10;
+        float wa01 = w01 * a01;
+        float wa11 = w11 * a11;
+        float totalWeight = wa00 + wa10 + wa01 + wa11;
+
+        if (totalWeight > 0.001f) {
+            // Interpolate straight-alpha colors weighted by alpha
+            float r = (wa00 * r00 + wa10 * r10 + wa01 * r01 + wa11 * r11) / totalWeight;
+            float g = (wa00 * g00 + wa10 * g10 + wa01 * g01 + wa11 * g11) / totalWeight;
+            float b = (wa00 * b00 + wa10 * b10 + wa01 * b01 + wa11 * b11) / totalWeight;
+
+            // Convert back to premultiplied form (color * alpha/max)
+            float alphaNorm = alpha / maxChan16F;
+            result.red = static_cast<A_u_short>(CLAMP(r * alphaNorm, 0.0f, maxChan16F) + 0.5f);
+            result.green = static_cast<A_u_short>(CLAMP(g * alphaNorm, 0.0f, maxChan16F) + 0.5f);
+            result.blue = static_cast<A_u_short>(CLAMP(b * alphaNorm, 0.0f, maxChan16F) + 0.5f);
+        } else {
+            result.red = result.green = result.blue = 0;
+        }
+    } else {
+        result.red = result.green = result.blue = 0;
+    }
 
     return result;
 }
