@@ -396,26 +396,95 @@ ProcessMultiSlice(
 
     const A_long idx = FindSliceIndex(ctx, sliceX);
     if (idx < 0) {
-        // No slice covers this coordinate: fully transparent.
         out->alpha = out->red = out->green = out->blue = 0;
         return err;
     }
 
-    // Simple approach: check if pixel center is within the visible area of this slice
-    // No anti-aliasing at slice boundaries to completely prevent color bleeding
-    const SliceSegment& seg = ctx->segments[idx];
+    float halfSpan = ctx->pixelSpan * 0.5f;
+    float pixelStart = sliceX - halfSpan;
+    float pixelEnd = sliceX + halfSpan;
+
+    // Accumulate contributions from slices
+    // Key principle: alpha is blended by coverage, but color comes only from opaque pixels
+    float accumAlpha = 0.0f;
+    float accumWeight = 0.0f;
     
-    if (sliceX < seg.visibleStart || sliceX > seg.visibleEnd) {
-        // Pixel center is outside visible area - transparent
+    // For color: we only use colors from pixels with alpha > 0
+    // This prevents transparent pixel colors (black) from bleeding in
+    float straightR = 0.0f, straightG = 0.0f, straightB = 0.0f;
+    float colorWeight = 0.0f;
+
+    auto accumulateSlice = [&](A_long sliceIdx) {
+        if (sliceIdx < 0 || sliceIdx >= ctx->numSlices) return;
+        
+        const SliceSegment& seg = ctx->segments[sliceIdx];
+        float overlapCenter = 0.0f;
+        float coverage = 0.0f;
+        if (!ComputeOverlap(seg, pixelStart, pixelEnd, overlapCenter, coverage) || coverage <= 0.0001f) {
+            return;
+        }
+
+        float axisDelta = overlapCenter - sliceX;
+        float sampleWorldX = worldX + axisDelta * ctx->angleCos;
+        float sampleWorldY = worldY + axisDelta * ctx->angleSin;
+
+        PF_Pixel samplePixel = SampleShiftedPixel8(ctx, seg, sampleWorldX, sampleWorldY);
+        float sampleA = static_cast<float>(samplePixel.alpha);
+        
+        // Alpha is accumulated with coverage (for slice boundary AA)
+        accumAlpha += coverage * sampleA;
+        accumWeight += coverage;
+        
+        // Color: only accumulate from pixels that have alpha
+        // This is the key to preventing black bleeding
+        if (sampleA > 0.5f) {
+            // Convert premultiplied to straight alpha (get the actual color)
+            float invA = 255.0f / sampleA;
+            float srcR = samplePixel.red * invA;
+            float srcG = samplePixel.green * invA;
+            float srcB = samplePixel.blue * invA;
+            
+            // Weight by coverage only (not by alpha again, since we're working with straight colors)
+            straightR += coverage * srcR;
+            straightG += coverage * srcG;
+            straightB += coverage * srcB;
+            colorWeight += coverage;
+        }
+    };
+
+    accumulateSlice(idx);
+    if (pixelStart < ctx->segments[idx].visibleStart) {
+        accumulateSlice(idx - 1);
+    }
+    if (pixelEnd > ctx->segments[idx].visibleEnd) {
+        accumulateSlice(idx + 1);
+    }
+
+    if (accumWeight <= 0.0001f) {
         out->alpha = out->red = out->green = out->blue = 0;
         return err;
     }
 
-    // Sample the pixel directly - no coverage blending, no color modification
-    PF_Pixel samplePixel = SampleShiftedPixel8(ctx, seg, worldX, worldY);
+    // Output alpha (slice boundary AA)
+    float finalAlpha = accumAlpha / accumWeight;
+    out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, finalAlpha + 0.5f)));
     
-    // Direct copy - preserves original color exactly
-    *out = samplePixel;
+    // Output color
+    if (colorWeight > 0.001f && out->alpha > 0) {
+        // Average the straight-alpha colors from opaque source pixels
+        float avgR = straightR / colorWeight;
+        float avgG = straightG / colorWeight;
+        float avgB = straightB / colorWeight;
+        
+        // Convert back to premultiplied form using the output alpha
+        // This preserves the source color while applying the slice boundary alpha
+        float alphaNorm = out->alpha / 255.0f;
+        out->red   = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgR * alphaNorm + 0.5f)));
+        out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgG * alphaNorm + 0.5f)));
+        out->blue  = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgB * alphaNorm + 0.5f)));
+    } else {
+        out->red = out->green = out->blue = 0;
+    }
 
     return err;
 }
@@ -448,21 +517,48 @@ ProcessMultiSlice16(
         return err;
     }
 
-    // Simple approach: check if pixel center is within the visible area of this slice
-    // No anti-aliasing at slice boundaries to completely prevent color bleeding
-    const SliceSegment& seg = ctx->segments[idx];
-    
-    if (sliceX < seg.visibleStart || sliceX > seg.visibleEnd) {
-        // Pixel center is outside visible area - transparent
-        out->alpha = out->red = out->green = out->blue = 0;
-        return err;
-    }
+    float halfSpan = ctx->pixelSpan * 0.5f;
+    float pixelStart = sliceX - halfSpan;
+    float pixelEnd = sliceX + halfSpan;
+    float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
 
-    // Sample the pixel directly - no coverage blending, no color modification
-    PF_Pixel16 samplePixel = SampleShiftedPixel16(ctx, seg, worldX, worldY);
-    
-    // Direct copy - preserves original color exactly
-    *out = samplePixel;
+    float accumAlpha = 0.0f, accumWeight = 0.0f;
+    float straightR = 0.0f, straightG = 0.0f, straightB = 0.0f, colorWeight = 0.0f;
+
+    auto accumulateSlice16 = [&](A_long sliceIdx) {
+        if (sliceIdx < 0 || sliceIdx >= ctx->numSlices) return;
+        const SliceSegment& seg = ctx->segments[sliceIdx];
+        float overlapCenter = 0.0f, coverage = 0.0f;
+        if (!ComputeOverlap(seg, pixelStart, pixelEnd, overlapCenter, coverage) || coverage <= 0.0001f) return;
+
+        float axisDelta = overlapCenter - sliceX;
+        PF_Pixel16 sp = SampleShiftedPixel16(ctx, seg, worldX + axisDelta * ctx->angleCos, worldY + axisDelta * ctx->angleSin);
+        float sA = static_cast<float>(sp.alpha);
+        accumAlpha += coverage * sA;
+        accumWeight += coverage;
+        if (sA > 0.5f) {
+            float invA = maxChan16F / sA;
+            straightR += coverage * sp.red * invA;
+            straightG += coverage * sp.green * invA;
+            straightB += coverage * sp.blue * invA;
+            colorWeight += coverage;
+        }
+    };
+
+    accumulateSlice16(idx);
+    if (pixelStart < ctx->segments[idx].visibleStart) accumulateSlice16(idx - 1);
+    if (pixelEnd > ctx->segments[idx].visibleEnd) accumulateSlice16(idx + 1);
+
+    if (accumWeight <= 0.0001f) { out->alpha = out->red = out->green = out->blue = 0; return err; }
+
+    float finalAlpha = accumAlpha / accumWeight;
+    out->alpha = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, finalAlpha + 0.5f)));
+    if (colorWeight > 0.001f && out->alpha > 0) {
+        float aN = out->alpha / maxChan16F;
+        out->red   = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, straightR / colorWeight * aN + 0.5f)));
+        out->green = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, straightG / colorWeight * aN + 0.5f)));
+        out->blue  = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, straightB / colorWeight * aN + 0.5f)));
+    } else { out->red = out->green = out->blue = 0; }
 
     return err;
 }
