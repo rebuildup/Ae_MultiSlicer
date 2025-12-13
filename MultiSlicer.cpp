@@ -228,47 +228,14 @@ static PF_Pixel SampleSourcePixel8(
     const float w01 = (1.0f - fx) * fy;
     const float w11 = fx * fy;
 
-    // Interpolate alpha
-    float alpha = w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha;
-    result.alpha = static_cast<A_u_char>(alpha + 0.5f);
-
-    // For premultiplied alpha: if alpha is 0, color must be 0
-    // Interpolate color components weighted by alpha to maintain premultiplied form
-    if (result.alpha > 0) {
-        // Normalize colors by alpha for interpolation, then multiply back
-        float invAlpha00 = (p00->alpha > 0) ? (255.0f / p00->alpha) : 0.0f;
-        float invAlpha10 = (p10->alpha > 0) ? (255.0f / p10->alpha) : 0.0f;
-        float invAlpha01 = (p01->alpha > 0) ? (255.0f / p01->alpha) : 0.0f;
-        float invAlpha11 = (p11->alpha > 0) ? (255.0f / p11->alpha) : 0.0f;
-
-        float r00 = p00->red * invAlpha00;
-        float r10 = p10->red * invAlpha10;
-        float r01 = p01->red * invAlpha01;
-        float r11 = p11->red * invAlpha11;
-
-        float g00 = p00->green * invAlpha00;
-        float g10 = p10->green * invAlpha10;
-        float g01 = p01->green * invAlpha01;
-        float g11 = p11->green * invAlpha11;
-
-        float b00 = p00->blue * invAlpha00;
-        float b10 = p10->blue * invAlpha10;
-        float b01 = p01->blue * invAlpha01;
-        float b11 = p11->blue * invAlpha11;
-
-        // Interpolate normalized colors
-        float r = (w00 * r00 + w10 * r10 + w01 * r01 + w11 * r11);
-        float g = (w00 * g00 + w10 * g10 + w01 * g01 + w11 * g11);
-        float b = (w00 * b00 + w10 * b10 + w01 * b01 + w11 * b11);
-
-        // Convert back to premultiplied form
-        float alphaNorm = alpha / 255.0f;
-        result.red = static_cast<A_u_char>(CLAMP(r * alphaNorm, 0.0f, 255.0f) + 0.5f);
-        result.green = static_cast<A_u_char>(CLAMP(g * alphaNorm, 0.0f, 255.0f) + 0.5f);
-        result.blue = static_cast<A_u_char>(CLAMP(b * alphaNorm, 0.0f, 255.0f) + 0.5f);
-    } else {
-        result.red = result.green = result.blue = 0;
-    }
+    // For premultiplied alpha: interpolate color components directly
+    // Premultiplied alpha format means color components are already multiplied by alpha
+    // So we can interpolate them directly without normalization
+    // If alpha is 0, color must be 0 (already satisfied in premultiplied format)
+    result.alpha = static_cast<A_u_char>(w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha + 0.5f);
+    result.red = static_cast<A_u_char>(w00 * p00->red + w10 * p10->red + w01 * p01->red + w11 * p11->red + 0.5f);
+    result.green = static_cast<A_u_char>(w00 * p00->green + w10 * p10->green + w01 * p01->green + w11 * p11->green + 0.5f);
+    result.blue = static_cast<A_u_char>(w00 * p00->blue + w10 * p10->blue + w01 * p01->blue + w11 * p11->blue + 0.5f);
 
     return result;
 }
@@ -310,48 +277,14 @@ static PF_Pixel16 SampleSourcePixel16(
     const float w01 = (1.0f - fx) * fy;
     const float w11 = fx * fy;
 
-    // Interpolate alpha
-    float alpha = w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha;
-    result.alpha = static_cast<A_u_short>(alpha + 0.5f);
-
-    // For premultiplied alpha: if alpha is 0, color must be 0
-    // Interpolate color components weighted by alpha to maintain premultiplied form
-    if (result.alpha > 0) {
-        // Normalize colors by alpha for interpolation, then multiply back
-        float invAlpha00 = (p00->alpha > 0) ? (PF_MAX_CHAN16 / (float)p00->alpha) : 0.0f;
-        float invAlpha10 = (p10->alpha > 0) ? (PF_MAX_CHAN16 / (float)p10->alpha) : 0.0f;
-        float invAlpha01 = (p01->alpha > 0) ? (PF_MAX_CHAN16 / (float)p01->alpha) : 0.0f;
-        float invAlpha11 = (p11->alpha > 0) ? (PF_MAX_CHAN16 / (float)p11->alpha) : 0.0f;
-
-        float r00 = p00->red * invAlpha00;
-        float r10 = p10->red * invAlpha10;
-        float r01 = p01->red * invAlpha01;
-        float r11 = p11->red * invAlpha11;
-
-        float g00 = p00->green * invAlpha00;
-        float g10 = p10->green * invAlpha10;
-        float g01 = p01->green * invAlpha01;
-        float g11 = p11->green * invAlpha11;
-
-        float b00 = p00->blue * invAlpha00;
-        float b10 = p10->blue * invAlpha10;
-        float b01 = p01->blue * invAlpha01;
-        float b11 = p11->blue * invAlpha11;
-
-        // Interpolate normalized colors
-        float r = (w00 * r00 + w10 * r10 + w01 * r01 + w11 * r11);
-        float g = (w00 * g00 + w10 * g10 + w01 * g01 + w11 * g11);
-        float b = (w00 * b00 + w10 * b10 + w01 * b01 + w11 * b11);
-
-        // Convert back to premultiplied form
-        float alphaNorm = alpha / static_cast<float>(PF_MAX_CHAN16);
-        float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
-        result.red = static_cast<A_u_short>(CLAMP(r * alphaNorm, 0.0f, maxChan16F) + 0.5f);
-        result.green = static_cast<A_u_short>(CLAMP(g * alphaNorm, 0.0f, maxChan16F) + 0.5f);
-        result.blue = static_cast<A_u_short>(CLAMP(b * alphaNorm, 0.0f, maxChan16F) + 0.5f);
-    } else {
-        result.red = result.green = result.blue = 0;
-    }
+    // For premultiplied alpha: interpolate color components directly
+    // Premultiplied alpha format means color components are already multiplied by alpha
+    // So we can interpolate them directly without normalization
+    // If alpha is 0, color must be 0 (already satisfied in premultiplied format)
+    result.alpha = static_cast<A_u_short>(w00 * p00->alpha + w10 * p10->alpha + w01 * p01->alpha + w11 * p11->alpha + 0.5f);
+    result.red = static_cast<A_u_short>(w00 * p00->red + w10 * p10->red + w01 * p01->red + w11 * p11->red + 0.5f);
+    result.green = static_cast<A_u_short>(w00 * p00->green + w10 * p10->green + w01 * p01->green + w11 * p11->green + 0.5f);
+    result.blue = static_cast<A_u_short>(w00 * p00->blue + w10 * p10->blue + w01 * p01->blue + w11 * p11->blue + 0.5f);
 
     return result;
 }
