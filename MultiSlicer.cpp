@@ -344,10 +344,11 @@ static PF_Pixel16 SampleSourcePixel16(
         float b = (w00 * b00 + w10 * b10 + w01 * b01 + w11 * b11);
 
         // Convert back to premultiplied form
-        float alphaNorm = alpha / PF_MAX_CHAN16;
-        result.red = static_cast<A_u_short>(CLAMP(r * alphaNorm, 0.0f, PF_MAX_CHAN16) + 0.5f);
-        result.green = static_cast<A_u_short>(CLAMP(g * alphaNorm, 0.0f, PF_MAX_CHAN16) + 0.5f);
-        result.blue = static_cast<A_u_short>(CLAMP(b * alphaNorm, 0.0f, PF_MAX_CHAN16) + 0.5f);
+        float alphaNorm = alpha / static_cast<float>(PF_MAX_CHAN16);
+        float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
+        result.red = static_cast<A_u_short>(CLAMP(r * alphaNorm, 0.0f, maxChan16F) + 0.5f);
+        result.green = static_cast<A_u_short>(CLAMP(g * alphaNorm, 0.0f, maxChan16F) + 0.5f);
+        result.blue = static_cast<A_u_short>(CLAMP(b * alphaNorm, 0.0f, maxChan16F) + 0.5f);
     } else {
         result.red = result.green = result.blue = 0;
     }
