@@ -411,6 +411,17 @@ ProcessMultiSlice(
     float accumB = 0.0f;
     float accumWeight = 0.0f;
 
+    // Accumulate color from slices with proper alpha handling
+    // To prevent color bleeding at slice boundaries, we:
+    // 1. Accumulate alpha weighted by coverage
+    // 2. Accumulate color in straight-alpha form (not premultiplied)
+    // 3. Convert to premultiplied at the end
+    float accumAlpha = 0.0f;
+    float accumR_straight = 0.0f;
+    float accumG_straight = 0.0f;
+    float accumB_straight = 0.0f;
+    float colorWeight = 0.0f;
+
     auto accumulateSlice = [&](A_long sliceIdx) {
         if (sliceIdx < 0 || sliceIdx >= ctx->numSlices) {
             return;
@@ -427,10 +438,25 @@ ProcessMultiSlice(
         float sampleWorldY = worldY + axisDelta * ctx->angleSin;
 
         PF_Pixel samplePixel = SampleShiftedPixel8(ctx, seg, sampleWorldX, sampleWorldY);
-        accumA += coverage * samplePixel.alpha;
-        accumR += coverage * samplePixel.red;
-        accumG += coverage * samplePixel.green;
-        accumB += coverage * samplePixel.blue;
+        
+        // Accumulate alpha normally
+        float sampleAlpha = static_cast<float>(samplePixel.alpha);
+        accumAlpha += coverage * sampleAlpha;
+        
+        // For color: only accumulate if pixel has alpha, using straight-alpha colors
+        if (sampleAlpha > 0.5f) {
+            // Convert premultiplied to straight alpha
+            float straightR = samplePixel.red * 255.0f / sampleAlpha;
+            float straightG = samplePixel.green * 255.0f / sampleAlpha;
+            float straightB = samplePixel.blue * 255.0f / sampleAlpha;
+            
+            // Weight color by coverage AND alpha
+            float weight = coverage * sampleAlpha;
+            accumR_straight += weight * straightR;
+            accumG_straight += weight * straightG;
+            accumB_straight += weight * straightB;
+            colorWeight += weight;
+        }
         accumWeight += coverage;
     };
 
@@ -447,10 +473,24 @@ ProcessMultiSlice(
         return err;
     }
 
-    out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumA + 0.5f)));
-    out->red   = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumR + 0.5f)));
-    out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumG + 0.5f)));
-    out->blue  = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumB + 0.5f)));
+    // Output alpha
+    out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, accumAlpha + 0.5f)));
+    
+    // Output color in premultiplied form
+    if (colorWeight > 0.001f && out->alpha > 0) {
+        // Average the straight-alpha colors
+        float avgR = accumR_straight / colorWeight;
+        float avgG = accumG_straight / colorWeight;
+        float avgB = accumB_straight / colorWeight;
+        
+        // Convert to premultiplied (multiply by output alpha)
+        float alphaNorm = out->alpha / 255.0f;
+        out->red   = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgR * alphaNorm + 0.5f)));
+        out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgG * alphaNorm + 0.5f)));
+        out->blue  = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgB * alphaNorm + 0.5f)));
+    } else {
+        out->red = out->green = out->blue = 0;
+    }
 
     return err;
 }
@@ -487,10 +527,14 @@ ProcessMultiSlice16(
     float pixelStart16 = sliceX - halfSpan16;
     float pixelEnd16 = sliceX + halfSpan16;
 
-    float accumA16 = 0.0f;
-    float accumR16 = 0.0f;
-    float accumG16 = 0.0f;
-    float accumB16 = 0.0f;
+    float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
+
+    // Accumulate color from slices with proper alpha handling
+    float accumAlpha16 = 0.0f;
+    float accumR_straight16 = 0.0f;
+    float accumG_straight16 = 0.0f;
+    float accumB_straight16 = 0.0f;
+    float colorWeight16 = 0.0f;
     float accumWeight16 = 0.0f;
 
     auto accumulateSlice16 = [&](A_long sliceIdx) {
@@ -509,10 +553,25 @@ ProcessMultiSlice16(
         float sampleWorldY = worldY + axisDelta * ctx->angleSin;
 
         PF_Pixel16 samplePixel = SampleShiftedPixel16(ctx, seg, sampleWorldX, sampleWorldY);
-        accumA16 += coverage * static_cast<float>(samplePixel.alpha);
-        accumR16 += coverage * static_cast<float>(samplePixel.red);
-        accumG16 += coverage * static_cast<float>(samplePixel.green);
-        accumB16 += coverage * static_cast<float>(samplePixel.blue);
+        
+        // Accumulate alpha normally
+        float sampleAlpha = static_cast<float>(samplePixel.alpha);
+        accumAlpha16 += coverage * sampleAlpha;
+        
+        // For color: only accumulate if pixel has alpha, using straight-alpha colors
+        if (sampleAlpha > 0.5f) {
+            // Convert premultiplied to straight alpha
+            float straightR = samplePixel.red * maxChan16F / sampleAlpha;
+            float straightG = samplePixel.green * maxChan16F / sampleAlpha;
+            float straightB = samplePixel.blue * maxChan16F / sampleAlpha;
+            
+            // Weight color by coverage AND alpha
+            float weight = coverage * sampleAlpha;
+            accumR_straight16 += weight * straightR;
+            accumG_straight16 += weight * straightG;
+            accumB_straight16 += weight * straightB;
+            colorWeight16 += weight;
+        }
         accumWeight16 += coverage;
     };
 
@@ -529,10 +588,24 @@ ProcessMultiSlice16(
         return err;
     }
 
-    out->alpha = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumA16 + 0.5f)));
-    out->red   = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumR16 + 0.5f)));
-    out->green = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumG16 + 0.5f)));
-    out->blue  = static_cast<A_u_short>(MIN(PF_MAX_CHAN16, MAX(0.0f, accumB16 + 0.5f)));
+    // Output alpha
+    out->alpha = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, accumAlpha16 + 0.5f)));
+    
+    // Output color in premultiplied form
+    if (colorWeight16 > 0.001f && out->alpha > 0) {
+        // Average the straight-alpha colors
+        float avgR = accumR_straight16 / colorWeight16;
+        float avgG = accumG_straight16 / colorWeight16;
+        float avgB = accumB_straight16 / colorWeight16;
+        
+        // Convert to premultiplied (multiply by output alpha)
+        float alphaNorm = out->alpha / maxChan16F;
+        out->red   = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, avgR * alphaNorm + 0.5f)));
+        out->green = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, avgG * alphaNorm + 0.5f)));
+        out->blue  = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, avgB * alphaNorm + 0.5f)));
+    } else {
+        out->red = out->green = out->blue = 0;
+    }
 
     return err;
 }
