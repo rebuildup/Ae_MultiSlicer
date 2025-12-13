@@ -334,6 +334,7 @@ static inline bool EstimateStraightFromNeighbors8(
     constexpr A_long kRadius = 4;
     constexpr A_u_char kMinA = 1;
 
+    A_u_char bestAlpha = 0;
     float bestDist2 = 1e30f;
     PF_Pixel best = { 0, 0, 0, 0 };
     bool found = false;
@@ -345,11 +346,12 @@ static inline bool EstimateStraightFromNeighbors8(
             if (!ReadSourcePixel8At(ctx, cx + dx, cy + dy, p)) continue;
             if (p.alpha < kMinA) continue;
             const float dist2 = static_cast<float>(dx * dx + dy * dy);
-            if (dist2 < bestDist2) {
+            if (!found || p.alpha > bestAlpha || (p.alpha == bestAlpha && dist2 < bestDist2)) {
+                bestAlpha = p.alpha;
                 bestDist2 = dist2;
                 best = p;
                 found = true;
-                if (dist2 <= 1.0f) break;
+                if (bestAlpha >= 255 && dist2 <= 1.0f) break;
             }
         }
     }
@@ -374,6 +376,7 @@ static inline bool EstimateStraightFromNeighbors16(
     constexpr A_long kRadius = 4;
     constexpr A_u_short kMinA = 1;
 
+    A_u_short bestAlpha = 0;
     float bestDist2 = 1e30f;
     PF_Pixel16 best = { 0, 0, 0, 0 };
     bool found = false;
@@ -385,11 +388,12 @@ static inline bool EstimateStraightFromNeighbors16(
             if (!ReadSourcePixel16At(ctx, cx + dx, cy + dy, p)) continue;
             if (p.alpha < kMinA) continue;
             const float dist2 = static_cast<float>(dx * dx + dy * dy);
-            if (dist2 < bestDist2) {
+            if (!found || p.alpha > bestAlpha || (p.alpha == bestAlpha && dist2 < bestDist2)) {
+                bestAlpha = p.alpha;
                 bestDist2 = dist2;
                 best = p;
                 found = true;
-                if (dist2 <= 1.0f) break;
+                if (bestAlpha >= PF_MAX_CHAN16 && dist2 <= 1.0f) break;
             }
         }
     }
@@ -597,7 +601,10 @@ ProcessMultiSlice(
 
         // Color (straight)
         float sR = 0.0f, sG = 0.0f, sB = 0.0f;
-        if (samplePixel.alpha > 0) {
+        // In 8bpc premult, very low alpha often quantizes RGB to 0 (losing edge color).
+        // Treat low-alpha samples as "unknown color" and pull color from nearby higher-alpha pixels.
+        constexpr A_u_char kMinReliableAlpha8 = 4;
+        if (samplePixel.alpha >= kMinReliableAlpha8) {
             PremultToStraight8(samplePixel, sR, sG, sB);
         }
         else {
@@ -700,7 +707,9 @@ ProcessMultiSlice16(
         accumWeight += coverage;
 
         float sR = 0.0f, sG = 0.0f, sB = 0.0f;
-        if (sp.alpha > 0) {
+        // Same idea as 8bpc: if alpha is extremely low, premult RGB may be effectively 0.
+        constexpr A_u_short kMinReliableAlpha16 = 256;
+        if (sp.alpha >= kMinReliableAlpha16) {
             PremultToStraight16(sp, sR, sG, sB);
         }
         else {
