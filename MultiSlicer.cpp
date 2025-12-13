@@ -405,14 +405,13 @@ ProcessMultiSlice(
     float pixelEnd = sliceX + halfSpan;
 
     // Accumulate contributions from slices
-    // Key principle: alpha is blended by coverage, but color comes only from opaque pixels
+    // Key principle (premultiplied RGBA):
+    // - Alpha is blended by coverage (slice boundary AA)
+    // - Color should be blended in premultiplied space by the SAME coverage weights
+    //   (this keeps straight color stable when only alpha differs and avoids dark/black edges)
     float accumAlpha = 0.0f;
     float accumWeight = 0.0f;
-    
-    // For color: we only use colors from pixels with alpha > 0
-    // This prevents transparent pixel colors (black) from bleeding in
-    float straightR = 0.0f, straightG = 0.0f, straightB = 0.0f;
-    float colorWeight = 0.0f;
+    float accumR = 0.0f, accumG = 0.0f, accumB = 0.0f;
 
     auto accumulateSlice = [&](A_long sliceIdx) {
         if (sliceIdx < 0 || sliceIdx >= ctx->numSlices) return;
@@ -434,22 +433,13 @@ ProcessMultiSlice(
         // Alpha is accumulated with coverage (for slice boundary AA)
         accumAlpha += coverage * sampleA;
         accumWeight += coverage;
-        
-        // Color: only accumulate from pixels that have alpha
-        // This is the key to preventing black bleeding
-        if (sampleA > 0.5f) {
-            // Convert premultiplied to straight alpha (get the actual color)
-            float invA = 255.0f / sampleA;
-            float srcR = samplePixel.red * invA;
-            float srcG = samplePixel.green * invA;
-            float srcB = samplePixel.blue * invA;
-            
-            // Weight by coverage only (not by alpha again, since we're working with straight colors)
-            straightR += coverage * srcR;
-            straightG += coverage * srcG;
-            straightB += coverage * srcB;
-            colorWeight += coverage;
-        }
+
+        // Color: accumulate premultiplied channels by the same coverage weights.
+        // This effectively averages straight color with alpha-weighting (premultiplied filtering),
+        // preventing low/zero-alpha samples from pulling the color toward black.
+        accumR += coverage * static_cast<float>(samplePixel.red);
+        accumG += coverage * static_cast<float>(samplePixel.green);
+        accumB += coverage * static_cast<float>(samplePixel.blue);
     };
 
     accumulateSlice(idx);
@@ -468,23 +458,11 @@ ProcessMultiSlice(
     // Output alpha (slice boundary AA)
     float finalAlpha = accumAlpha / accumWeight;
     out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, finalAlpha + 0.5f)));
-    
-    // Output color
-    if (colorWeight > 0.001f && out->alpha > 0) {
-        // Average the straight-alpha colors from opaque source pixels
-        float avgR = straightR / colorWeight;
-        float avgG = straightG / colorWeight;
-        float avgB = straightB / colorWeight;
-        
-        // Convert back to premultiplied form using the output alpha
-        // This preserves the source color while applying the slice boundary alpha
-        float alphaNorm = out->alpha / 255.0f;
-        out->red   = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgR * alphaNorm + 0.5f)));
-        out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgG * alphaNorm + 0.5f)));
-        out->blue  = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgB * alphaNorm + 0.5f)));
-    } else {
-        out->red = out->green = out->blue = 0;
-    }
+
+    // Output color (premultiplied)
+    out->red   = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, (accumR / accumWeight) + 0.5f)));
+    out->green = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, (accumG / accumWeight) + 0.5f)));
+    out->blue  = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, (accumB / accumWeight) + 0.5f)));
 
     return err;
 }
@@ -523,7 +501,7 @@ ProcessMultiSlice16(
     float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
 
     float accumAlpha = 0.0f, accumWeight = 0.0f;
-    float straightR = 0.0f, straightG = 0.0f, straightB = 0.0f, colorWeight = 0.0f;
+    float accumR = 0.0f, accumG = 0.0f, accumB = 0.0f;
 
     auto accumulateSlice16 = [&](A_long sliceIdx) {
         if (sliceIdx < 0 || sliceIdx >= ctx->numSlices) return;
@@ -536,13 +514,9 @@ ProcessMultiSlice16(
         float sA = static_cast<float>(sp.alpha);
         accumAlpha += coverage * sA;
         accumWeight += coverage;
-        if (sA > 0.5f) {
-            float invA = maxChan16F / sA;
-            straightR += coverage * sp.red * invA;
-            straightG += coverage * sp.green * invA;
-            straightB += coverage * sp.blue * invA;
-            colorWeight += coverage;
-        }
+        accumR += coverage * static_cast<float>(sp.red);
+        accumG += coverage * static_cast<float>(sp.green);
+        accumB += coverage * static_cast<float>(sp.blue);
     };
 
     accumulateSlice16(idx);
@@ -553,12 +527,9 @@ ProcessMultiSlice16(
 
     float finalAlpha = accumAlpha / accumWeight;
     out->alpha = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, finalAlpha + 0.5f)));
-    if (colorWeight > 0.001f && out->alpha > 0) {
-        float aN = out->alpha / maxChan16F;
-        out->red   = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, straightR / colorWeight * aN + 0.5f)));
-        out->green = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, straightG / colorWeight * aN + 0.5f)));
-        out->blue  = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, straightB / colorWeight * aN + 0.5f)));
-    } else { out->red = out->green = out->blue = 0; }
+    out->red   = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, (accumR / accumWeight) + 0.5f)));
+    out->green = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, (accumG / accumWeight) + 0.5f)));
+    out->blue  = static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, (accumB / accumWeight) + 0.5f)));
 
     return err;
 }
