@@ -228,62 +228,75 @@ static PF_Pixel SampleSourcePixel8(
     const float w01 = (1.0f - fx) * fy;
     const float w11 = fx * fy;
 
-    // Alpha-weighted bilinear interpolation to prevent color bleeding from transparent pixels
-    // AE uses premultiplied alpha, so we need to:
-    // 1. Convert to straight alpha (divide color by alpha)
-    // 2. Interpolate with alpha weighting
-    // 3. Convert back to premultiplied (multiply color by alpha)
+    // Bilinear interpolation with edge-aware color handling
+    // To prevent color bleeding from transparent pixels, we only use colors from
+    // pixels that have sufficient alpha, and inherit color from opaque neighbors
+    
     float a00 = static_cast<float>(p00->alpha);
     float a10 = static_cast<float>(p10->alpha);
     float a01 = static_cast<float>(p01->alpha);
     float a11 = static_cast<float>(p11->alpha);
 
-    // Interpolate alpha normally
+    // Interpolate alpha normally (this determines the final transparency)
     float alpha = w00 * a00 + w10 * a10 + w01 * a01 + w11 * a11;
     result.alpha = static_cast<A_u_char>(alpha + 0.5f);
 
-    if (alpha > 0.5f) {
-        // Convert premultiplied colors to straight alpha (actual RGB values)
-        // If alpha is 0, the color doesn't matter (we use 0)
-        float r00 = (a00 > 0.5f) ? (p00->red * 255.0f / a00) : 0.0f;
-        float r10 = (a10 > 0.5f) ? (p10->red * 255.0f / a10) : 0.0f;
-        float r01 = (a01 > 0.5f) ? (p01->red * 255.0f / a01) : 0.0f;
-        float r11 = (a11 > 0.5f) ? (p11->red * 255.0f / a11) : 0.0f;
-
-        float g00 = (a00 > 0.5f) ? (p00->green * 255.0f / a00) : 0.0f;
-        float g10 = (a10 > 0.5f) ? (p10->green * 255.0f / a10) : 0.0f;
-        float g01 = (a01 > 0.5f) ? (p01->green * 255.0f / a01) : 0.0f;
-        float g11 = (a11 > 0.5f) ? (p11->green * 255.0f / a11) : 0.0f;
-
-        float b00 = (a00 > 0.5f) ? (p00->blue * 255.0f / a00) : 0.0f;
-        float b10 = (a10 > 0.5f) ? (p10->blue * 255.0f / a10) : 0.0f;
-        float b01 = (a01 > 0.5f) ? (p01->blue * 255.0f / a01) : 0.0f;
-        float b11 = (a11 > 0.5f) ? (p11->blue * 255.0f / a11) : 0.0f;
-
-        // Weight by both position AND alpha to prevent transparent pixels from contributing color
-        float wa00 = w00 * a00;
-        float wa10 = w10 * a10;
-        float wa01 = w01 * a01;
-        float wa11 = w11 * a11;
-        float totalWeight = wa00 + wa10 + wa01 + wa11;
-
-        if (totalWeight > 0.001f) {
-            // Interpolate straight-alpha colors weighted by alpha
-            float r = (wa00 * r00 + wa10 * r10 + wa01 * r01 + wa11 * r11) / totalWeight;
-            float g = (wa00 * g00 + wa10 * g10 + wa01 * g01 + wa11 * g11) / totalWeight;
-            float b = (wa00 * b00 + wa10 * b10 + wa01 * b01 + wa11 * b11) / totalWeight;
-
-            // Convert back to premultiplied form (color * alpha/255)
-            float alphaNorm = alpha / 255.0f;
-            result.red = static_cast<A_u_char>(CLAMP(r * alphaNorm, 0.0f, 255.0f) + 0.5f);
-            result.green = static_cast<A_u_char>(CLAMP(g * alphaNorm, 0.0f, 255.0f) + 0.5f);
-            result.blue = static_cast<A_u_char>(CLAMP(b * alphaNorm, 0.0f, 255.0f) + 0.5f);
-        } else {
-            result.red = result.green = result.blue = 0;
-        }
-    } else {
+    if (alpha < 0.5f) {
         result.red = result.green = result.blue = 0;
+        return result;
     }
+
+    // For color interpolation, only consider pixels with alpha > threshold
+    // Transparent pixels should not contribute their color at all
+    const float ALPHA_THRESHOLD = 1.0f;  // Minimum alpha to consider for color
+    
+    // Convert premultiplied to straight alpha for opaque pixels only
+    // For transparent/semi-transparent pixels, we'll use the nearest opaque pixel's color
+    float r00, g00, b00, r10, g10, b10, r01, g01, b01, r11, g11, b11;
+    bool valid00 = (a00 > ALPHA_THRESHOLD);
+    bool valid10 = (a10 > ALPHA_THRESHOLD);
+    bool valid01 = (a01 > ALPHA_THRESHOLD);
+    bool valid11 = (a11 > ALPHA_THRESHOLD);
+    
+    // Extract straight-alpha colors from valid (opaque enough) pixels
+    if (valid00) { r00 = p00->red * 255.0f / a00; g00 = p00->green * 255.0f / a00; b00 = p00->blue * 255.0f / a00; }
+    if (valid10) { r10 = p10->red * 255.0f / a10; g10 = p10->green * 255.0f / a10; b10 = p10->blue * 255.0f / a10; }
+    if (valid01) { r01 = p01->red * 255.0f / a01; g01 = p01->green * 255.0f / a01; b01 = p01->blue * 255.0f / a01; }
+    if (valid11) { r11 = p11->red * 255.0f / a11; g11 = p11->green * 255.0f / a11; b11 = p11->blue * 255.0f / a11; }
+    
+    // Count valid pixels and find a reference color from any valid pixel
+    int validCount = (valid00 ? 1 : 0) + (valid10 ? 1 : 0) + (valid01 ? 1 : 0) + (valid11 ? 1 : 0);
+    
+    if (validCount == 0) {
+        // No valid pixels - fully transparent
+        result.red = result.green = result.blue = 0;
+        return result;
+    }
+    
+    // For invalid (transparent) pixels, inherit color from nearest valid pixel
+    // This prevents black from bleeding into the edge
+    float refR = 0, refG = 0, refB = 0;
+    if (valid00) { refR = r00; refG = g00; refB = b00; }
+    else if (valid10) { refR = r10; refG = g10; refB = b10; }
+    else if (valid01) { refR = r01; refG = g01; refB = b01; }
+    else if (valid11) { refR = r11; refG = g11; refB = b11; }
+    
+    // Fill in invalid pixels with reference color
+    if (!valid00) { r00 = refR; g00 = refG; b00 = refB; }
+    if (!valid10) { r10 = refR; g10 = refG; b10 = refB; }
+    if (!valid01) { r01 = refR; g01 = refG; b01 = refB; }
+    if (!valid11) { r11 = refR; g11 = refG; b11 = refB; }
+    
+    // Now do standard bilinear interpolation on the colors
+    float r = w00 * r00 + w10 * r10 + w01 * r01 + w11 * r11;
+    float g = w00 * g00 + w10 * g10 + w01 * g01 + w11 * g11;
+    float b = w00 * b00 + w10 * b10 + w01 * b01 + w11 * b11;
+    
+    // Convert back to premultiplied form
+    float alphaNorm = alpha / 255.0f;
+    result.red = static_cast<A_u_char>(CLAMP(r * alphaNorm, 0.0f, 255.0f) + 0.5f);
+    result.green = static_cast<A_u_char>(CLAMP(g * alphaNorm, 0.0f, 255.0f) + 0.5f);
+    result.blue = static_cast<A_u_char>(CLAMP(b * alphaNorm, 0.0f, 255.0f) + 0.5f);
 
     return result;
 }
@@ -325,64 +338,77 @@ static PF_Pixel16 SampleSourcePixel16(
     const float w01 = (1.0f - fx) * fy;
     const float w11 = fx * fy;
 
-    // Alpha-weighted bilinear interpolation to prevent color bleeding from transparent pixels
-    // AE uses premultiplied alpha, so we need to:
-    // 1. Convert to straight alpha (divide color by alpha)
-    // 2. Interpolate with alpha weighting
-    // 3. Convert back to premultiplied (multiply color by alpha)
+    // Bilinear interpolation with edge-aware color handling
+    // To prevent color bleeding from transparent pixels, we only use colors from
+    // pixels that have sufficient alpha, and inherit color from opaque neighbors
+    
     float a00 = static_cast<float>(p00->alpha);
     float a10 = static_cast<float>(p10->alpha);
     float a01 = static_cast<float>(p01->alpha);
     float a11 = static_cast<float>(p11->alpha);
 
-    // Interpolate alpha normally
+    // Interpolate alpha normally (this determines the final transparency)
     float alpha = w00 * a00 + w10 * a10 + w01 * a01 + w11 * a11;
     result.alpha = static_cast<A_u_short>(alpha + 0.5f);
 
     float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
 
-    if (alpha > 0.5f) {
-        // Convert premultiplied colors to straight alpha (actual RGB values)
-        // If alpha is 0, the color doesn't matter (we use 0)
-        float r00 = (a00 > 0.5f) ? (p00->red * maxChan16F / a00) : 0.0f;
-        float r10 = (a10 > 0.5f) ? (p10->red * maxChan16F / a10) : 0.0f;
-        float r01 = (a01 > 0.5f) ? (p01->red * maxChan16F / a01) : 0.0f;
-        float r11 = (a11 > 0.5f) ? (p11->red * maxChan16F / a11) : 0.0f;
-
-        float g00 = (a00 > 0.5f) ? (p00->green * maxChan16F / a00) : 0.0f;
-        float g10 = (a10 > 0.5f) ? (p10->green * maxChan16F / a10) : 0.0f;
-        float g01 = (a01 > 0.5f) ? (p01->green * maxChan16F / a01) : 0.0f;
-        float g11 = (a11 > 0.5f) ? (p11->green * maxChan16F / a11) : 0.0f;
-
-        float b00 = (a00 > 0.5f) ? (p00->blue * maxChan16F / a00) : 0.0f;
-        float b10 = (a10 > 0.5f) ? (p10->blue * maxChan16F / a10) : 0.0f;
-        float b01 = (a01 > 0.5f) ? (p01->blue * maxChan16F / a01) : 0.0f;
-        float b11 = (a11 > 0.5f) ? (p11->blue * maxChan16F / a11) : 0.0f;
-
-        // Weight by both position AND alpha to prevent transparent pixels from contributing color
-        float wa00 = w00 * a00;
-        float wa10 = w10 * a10;
-        float wa01 = w01 * a01;
-        float wa11 = w11 * a11;
-        float totalWeight = wa00 + wa10 + wa01 + wa11;
-
-        if (totalWeight > 0.001f) {
-            // Interpolate straight-alpha colors weighted by alpha
-            float r = (wa00 * r00 + wa10 * r10 + wa01 * r01 + wa11 * r11) / totalWeight;
-            float g = (wa00 * g00 + wa10 * g10 + wa01 * g01 + wa11 * g11) / totalWeight;
-            float b = (wa00 * b00 + wa10 * b10 + wa01 * b01 + wa11 * b11) / totalWeight;
-
-            // Convert back to premultiplied form (color * alpha/max)
-            float alphaNorm = alpha / maxChan16F;
-            result.red = static_cast<A_u_short>(CLAMP(r * alphaNorm, 0.0f, maxChan16F) + 0.5f);
-            result.green = static_cast<A_u_short>(CLAMP(g * alphaNorm, 0.0f, maxChan16F) + 0.5f);
-            result.blue = static_cast<A_u_short>(CLAMP(b * alphaNorm, 0.0f, maxChan16F) + 0.5f);
-        } else {
-            result.red = result.green = result.blue = 0;
-        }
-    } else {
+    if (alpha < 0.5f) {
         result.red = result.green = result.blue = 0;
+        return result;
     }
+
+    // For color interpolation, only consider pixels with alpha > threshold
+    // Transparent pixels should not contribute their color at all
+    const float ALPHA_THRESHOLD = 1.0f;  // Minimum alpha to consider for color
+    
+    // Convert premultiplied to straight alpha for opaque pixels only
+    // For transparent/semi-transparent pixels, we'll use the nearest opaque pixel's color
+    float r00, g00, b00, r10, g10, b10, r01, g01, b01, r11, g11, b11;
+    bool valid00 = (a00 > ALPHA_THRESHOLD);
+    bool valid10 = (a10 > ALPHA_THRESHOLD);
+    bool valid01 = (a01 > ALPHA_THRESHOLD);
+    bool valid11 = (a11 > ALPHA_THRESHOLD);
+    
+    // Extract straight-alpha colors from valid (opaque enough) pixels
+    if (valid00) { r00 = p00->red * maxChan16F / a00; g00 = p00->green * maxChan16F / a00; b00 = p00->blue * maxChan16F / a00; }
+    if (valid10) { r10 = p10->red * maxChan16F / a10; g10 = p10->green * maxChan16F / a10; b10 = p10->blue * maxChan16F / a10; }
+    if (valid01) { r01 = p01->red * maxChan16F / a01; g01 = p01->green * maxChan16F / a01; b01 = p01->blue * maxChan16F / a01; }
+    if (valid11) { r11 = p11->red * maxChan16F / a11; g11 = p11->green * maxChan16F / a11; b11 = p11->blue * maxChan16F / a11; }
+    
+    // Count valid pixels and find a reference color from any valid pixel
+    int validCount = (valid00 ? 1 : 0) + (valid10 ? 1 : 0) + (valid01 ? 1 : 0) + (valid11 ? 1 : 0);
+    
+    if (validCount == 0) {
+        // No valid pixels - fully transparent
+        result.red = result.green = result.blue = 0;
+        return result;
+    }
+    
+    // For invalid (transparent) pixels, inherit color from nearest valid pixel
+    // This prevents black from bleeding into the edge
+    float refR = 0, refG = 0, refB = 0;
+    if (valid00) { refR = r00; refG = g00; refB = b00; }
+    else if (valid10) { refR = r10; refG = g10; refB = b10; }
+    else if (valid01) { refR = r01; refG = g01; refB = b01; }
+    else if (valid11) { refR = r11; refG = g11; refB = b11; }
+    
+    // Fill in invalid pixels with reference color
+    if (!valid00) { r00 = refR; g00 = refG; b00 = refB; }
+    if (!valid10) { r10 = refR; g10 = refG; b10 = refB; }
+    if (!valid01) { r01 = refR; g01 = refG; b01 = refB; }
+    if (!valid11) { r11 = refR; g11 = refG; b11 = refB; }
+    
+    // Now do standard bilinear interpolation on the colors
+    float r = w00 * r00 + w10 * r10 + w01 * r01 + w11 * r11;
+    float g = w00 * g00 + w10 * g10 + w01 * g01 + w11 * g11;
+    float b = w00 * b00 + w10 * b10 + w01 * b01 + w11 * b11;
+    
+    // Convert back to premultiplied form
+    float alphaNorm = alpha / maxChan16F;
+    result.red = static_cast<A_u_short>(CLAMP(r * alphaNorm, 0.0f, maxChan16F) + 0.5f);
+    result.green = static_cast<A_u_short>(CLAMP(g * alphaNorm, 0.0f, maxChan16F) + 0.5f);
+    result.blue = static_cast<A_u_short>(CLAMP(b * alphaNorm, 0.0f, maxChan16F) + 0.5f);
 
     return result;
 }
