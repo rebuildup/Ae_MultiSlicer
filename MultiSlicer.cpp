@@ -191,8 +191,8 @@ static float GetRandomValue(A_long seed, A_long index) {
 
 
 
-// Sample pixel color from the source at given coordinates with bilinear interpolation
-// Uses premultiplied alpha to avoid color bleeding from transparent pixels
+// Sample pixel color from the source at given coordinates using nearest neighbor
+// This completely prevents color bleeding from adjacent pixels
 static PF_Pixel SampleSourcePixel8(
     float srcX,
     float srcY,
@@ -200,109 +200,26 @@ static PF_Pixel SampleSourcePixel8(
 {
     PF_Pixel result = { 0, 0, 0, 0 }; // Default to transparent black
 
-    if (srcX < -0.5f || srcX >= ctx->width - 0.5f ||
-        srcY < -0.5f || srcY >= ctx->height - 0.5f) {
+    // Use nearest neighbor (round to nearest integer)
+    A_long x = static_cast<A_long>(srcX + 0.5f);
+    A_long y = static_cast<A_long>(srcY + 0.5f);
+
+    if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
         return result;
     }
 
-    A_long x0 = static_cast<A_long>(floorf(srcX));
-    A_long y0 = static_cast<A_long>(floorf(srcY));
-    A_long x1 = x0 + 1;
-    A_long y1 = y0 + 1;
+    PF_Pixel* p = reinterpret_cast<PF_Pixel*>(
+        reinterpret_cast<char*>(ctx->srcData) + y * ctx->rowbytes + x * static_cast<A_long>(sizeof(PF_Pixel))
+    );
 
-    const float fx = srcX - x0;
-    const float fy = srcY - y0;
-
-    x0 = MAX(0L, MIN(x0, ctx->width - 1));
-    x1 = MAX(0L, MIN(x1, ctx->width - 1));
-    y0 = MAX(0L, MIN(y0, ctx->height - 1));
-    y1 = MAX(0L, MIN(y1, ctx->height - 1));
-
-    PF_Pixel* p00 = reinterpret_cast<PF_Pixel*>((reinterpret_cast<char*>(ctx->srcData)) + y0 * ctx->rowbytes + x0 * static_cast<A_long>(sizeof(PF_Pixel)));
-    PF_Pixel* p10 = reinterpret_cast<PF_Pixel*>((reinterpret_cast<char*>(ctx->srcData)) + y0 * ctx->rowbytes + x1 * static_cast<A_long>(sizeof(PF_Pixel)));
-    PF_Pixel* p01 = reinterpret_cast<PF_Pixel*>((reinterpret_cast<char*>(ctx->srcData)) + y1 * ctx->rowbytes + x0 * static_cast<A_long>(sizeof(PF_Pixel)));
-    PF_Pixel* p11 = reinterpret_cast<PF_Pixel*>((reinterpret_cast<char*>(ctx->srcData)) + y1 * ctx->rowbytes + x1 * static_cast<A_long>(sizeof(PF_Pixel)));
-
-    const float w00 = (1.0f - fx) * (1.0f - fy);
-    const float w10 = fx * (1.0f - fy);
-    const float w01 = (1.0f - fx) * fy;
-    const float w11 = fx * fy;
-
-    // Bilinear interpolation with edge-aware color handling
-    // To prevent color bleeding from transparent pixels, we only use colors from
-    // pixels that have sufficient alpha, and inherit color from opaque neighbors
-    
-    float a00 = static_cast<float>(p00->alpha);
-    float a10 = static_cast<float>(p10->alpha);
-    float a01 = static_cast<float>(p01->alpha);
-    float a11 = static_cast<float>(p11->alpha);
-
-    // Interpolate alpha normally (this determines the final transparency)
-    float alpha = w00 * a00 + w10 * a10 + w01 * a01 + w11 * a11;
-    result.alpha = static_cast<A_u_char>(alpha + 0.5f);
-
-    if (alpha < 0.5f) {
-        result.red = result.green = result.blue = 0;
-        return result;
-    }
-
-    // For color interpolation, only consider pixels with alpha > threshold
-    // Transparent pixels should not contribute their color at all
-    const float ALPHA_THRESHOLD = 1.0f;  // Minimum alpha to consider for color
-    
-    // Convert premultiplied to straight alpha for opaque pixels only
-    // For transparent/semi-transparent pixels, we'll use the nearest opaque pixel's color
-    float r00, g00, b00, r10, g10, b10, r01, g01, b01, r11, g11, b11;
-    bool valid00 = (a00 > ALPHA_THRESHOLD);
-    bool valid10 = (a10 > ALPHA_THRESHOLD);
-    bool valid01 = (a01 > ALPHA_THRESHOLD);
-    bool valid11 = (a11 > ALPHA_THRESHOLD);
-    
-    // Extract straight-alpha colors from valid (opaque enough) pixels
-    if (valid00) { r00 = p00->red * 255.0f / a00; g00 = p00->green * 255.0f / a00; b00 = p00->blue * 255.0f / a00; }
-    if (valid10) { r10 = p10->red * 255.0f / a10; g10 = p10->green * 255.0f / a10; b10 = p10->blue * 255.0f / a10; }
-    if (valid01) { r01 = p01->red * 255.0f / a01; g01 = p01->green * 255.0f / a01; b01 = p01->blue * 255.0f / a01; }
-    if (valid11) { r11 = p11->red * 255.0f / a11; g11 = p11->green * 255.0f / a11; b11 = p11->blue * 255.0f / a11; }
-    
-    // Count valid pixels and find a reference color from any valid pixel
-    int validCount = (valid00 ? 1 : 0) + (valid10 ? 1 : 0) + (valid01 ? 1 : 0) + (valid11 ? 1 : 0);
-    
-    if (validCount == 0) {
-        // No valid pixels - fully transparent
-        result.red = result.green = result.blue = 0;
-        return result;
-    }
-    
-    // For invalid (transparent) pixels, inherit color from nearest valid pixel
-    // This prevents black from bleeding into the edge
-    float refR = 0, refG = 0, refB = 0;
-    if (valid00) { refR = r00; refG = g00; refB = b00; }
-    else if (valid10) { refR = r10; refG = g10; refB = b10; }
-    else if (valid01) { refR = r01; refG = g01; refB = b01; }
-    else if (valid11) { refR = r11; refG = g11; refB = b11; }
-    
-    // Fill in invalid pixels with reference color
-    if (!valid00) { r00 = refR; g00 = refG; b00 = refB; }
-    if (!valid10) { r10 = refR; g10 = refG; b10 = refB; }
-    if (!valid01) { r01 = refR; g01 = refG; b01 = refB; }
-    if (!valid11) { r11 = refR; g11 = refG; b11 = refB; }
-    
-    // Now do standard bilinear interpolation on the colors
-    float r = w00 * r00 + w10 * r10 + w01 * r01 + w11 * r11;
-    float g = w00 * g00 + w10 * g10 + w01 * g01 + w11 * g11;
-    float b = w00 * b00 + w10 * b10 + w01 * b01 + w11 * b11;
-    
-    // Convert back to premultiplied form
-    float alphaNorm = alpha / 255.0f;
-    result.red = static_cast<A_u_char>(CLAMP(r * alphaNorm, 0.0f, 255.0f) + 0.5f);
-    result.green = static_cast<A_u_char>(CLAMP(g * alphaNorm, 0.0f, 255.0f) + 0.5f);
-    result.blue = static_cast<A_u_char>(CLAMP(b * alphaNorm, 0.0f, 255.0f) + 0.5f);
+    // Direct copy - no interpolation, no color bleeding
+    result = *p;
 
     return result;
 }
 
-// Sample 16-bit pixel color from the source with bilinear interpolation
-// Uses premultiplied alpha to avoid color bleeding from transparent pixels
+// Sample 16-bit pixel color from the source using nearest neighbor
+// This completely prevents color bleeding from adjacent pixels
 static PF_Pixel16 SampleSourcePixel16(
     float srcX,
     float srcY,
@@ -310,105 +227,20 @@ static PF_Pixel16 SampleSourcePixel16(
 {
     PF_Pixel16 result = { 0, 0, 0, 0 };
 
-    if (srcX < -0.5f || srcX >= ctx->width - 0.5f ||
-        srcY < -0.5f || srcY >= ctx->height - 0.5f) {
+    // Use nearest neighbor (round to nearest integer)
+    A_long x = static_cast<A_long>(srcX + 0.5f);
+    A_long y = static_cast<A_long>(srcY + 0.5f);
+
+    if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
         return result;
     }
 
-    A_long x0 = static_cast<A_long>(floorf(srcX));
-    A_long y0 = static_cast<A_long>(floorf(srcY));
-    A_long x1 = x0 + 1;
-    A_long y1 = y0 + 1;
+    PF_Pixel16* p = reinterpret_cast<PF_Pixel16*>(
+        reinterpret_cast<char*>(ctx->srcData) + y * ctx->rowbytes + x * static_cast<A_long>(sizeof(PF_Pixel16))
+    );
 
-    const float fx = srcX - x0;
-    const float fy = srcY - y0;
-
-    x0 = MAX(0L, MIN(x0, ctx->width - 1));
-    x1 = MAX(0L, MIN(x1, ctx->width - 1));
-    y0 = MAX(0L, MIN(y0, ctx->height - 1));
-    y1 = MAX(0L, MIN(y1, ctx->height - 1));
-
-    PF_Pixel16* p00 = reinterpret_cast<PF_Pixel16*>((reinterpret_cast<char*>(ctx->srcData)) + y0 * ctx->rowbytes + x0 * static_cast<A_long>(sizeof(PF_Pixel16)));
-    PF_Pixel16* p10 = reinterpret_cast<PF_Pixel16*>((reinterpret_cast<char*>(ctx->srcData)) + y0 * ctx->rowbytes + x1 * static_cast<A_long>(sizeof(PF_Pixel16)));
-    PF_Pixel16* p01 = reinterpret_cast<PF_Pixel16*>((reinterpret_cast<char*>(ctx->srcData)) + y1 * ctx->rowbytes + x0 * static_cast<A_long>(sizeof(PF_Pixel16)));
-    PF_Pixel16* p11 = reinterpret_cast<PF_Pixel16*>((reinterpret_cast<char*>(ctx->srcData)) + y1 * ctx->rowbytes + x1 * static_cast<A_long>(sizeof(PF_Pixel16)));
-
-    const float w00 = (1.0f - fx) * (1.0f - fy);
-    const float w10 = fx * (1.0f - fy);
-    const float w01 = (1.0f - fx) * fy;
-    const float w11 = fx * fy;
-
-    // Bilinear interpolation with edge-aware color handling
-    // To prevent color bleeding from transparent pixels, we only use colors from
-    // pixels that have sufficient alpha, and inherit color from opaque neighbors
-    
-    float a00 = static_cast<float>(p00->alpha);
-    float a10 = static_cast<float>(p10->alpha);
-    float a01 = static_cast<float>(p01->alpha);
-    float a11 = static_cast<float>(p11->alpha);
-
-    // Interpolate alpha normally (this determines the final transparency)
-    float alpha = w00 * a00 + w10 * a10 + w01 * a01 + w11 * a11;
-    result.alpha = static_cast<A_u_short>(alpha + 0.5f);
-
-    float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
-
-    if (alpha < 0.5f) {
-        result.red = result.green = result.blue = 0;
-        return result;
-    }
-
-    // For color interpolation, only consider pixels with alpha > threshold
-    // Transparent pixels should not contribute their color at all
-    const float ALPHA_THRESHOLD = 1.0f;  // Minimum alpha to consider for color
-    
-    // Convert premultiplied to straight alpha for opaque pixels only
-    // For transparent/semi-transparent pixels, we'll use the nearest opaque pixel's color
-    float r00, g00, b00, r10, g10, b10, r01, g01, b01, r11, g11, b11;
-    bool valid00 = (a00 > ALPHA_THRESHOLD);
-    bool valid10 = (a10 > ALPHA_THRESHOLD);
-    bool valid01 = (a01 > ALPHA_THRESHOLD);
-    bool valid11 = (a11 > ALPHA_THRESHOLD);
-    
-    // Extract straight-alpha colors from valid (opaque enough) pixels
-    if (valid00) { r00 = p00->red * maxChan16F / a00; g00 = p00->green * maxChan16F / a00; b00 = p00->blue * maxChan16F / a00; }
-    if (valid10) { r10 = p10->red * maxChan16F / a10; g10 = p10->green * maxChan16F / a10; b10 = p10->blue * maxChan16F / a10; }
-    if (valid01) { r01 = p01->red * maxChan16F / a01; g01 = p01->green * maxChan16F / a01; b01 = p01->blue * maxChan16F / a01; }
-    if (valid11) { r11 = p11->red * maxChan16F / a11; g11 = p11->green * maxChan16F / a11; b11 = p11->blue * maxChan16F / a11; }
-    
-    // Count valid pixels and find a reference color from any valid pixel
-    int validCount = (valid00 ? 1 : 0) + (valid10 ? 1 : 0) + (valid01 ? 1 : 0) + (valid11 ? 1 : 0);
-    
-    if (validCount == 0) {
-        // No valid pixels - fully transparent
-        result.red = result.green = result.blue = 0;
-        return result;
-    }
-    
-    // For invalid (transparent) pixels, inherit color from nearest valid pixel
-    // This prevents black from bleeding into the edge
-    float refR = 0, refG = 0, refB = 0;
-    if (valid00) { refR = r00; refG = g00; refB = b00; }
-    else if (valid10) { refR = r10; refG = g10; refB = b10; }
-    else if (valid01) { refR = r01; refG = g01; refB = b01; }
-    else if (valid11) { refR = r11; refG = g11; refB = b11; }
-    
-    // Fill in invalid pixels with reference color
-    if (!valid00) { r00 = refR; g00 = refG; b00 = refB; }
-    if (!valid10) { r10 = refR; g10 = refG; b10 = refB; }
-    if (!valid01) { r01 = refR; g01 = refG; b01 = refB; }
-    if (!valid11) { r11 = refR; g11 = refG; b11 = refB; }
-    
-    // Now do standard bilinear interpolation on the colors
-    float r = w00 * r00 + w10 * r10 + w01 * r01 + w11 * r11;
-    float g = w00 * g00 + w10 * g10 + w01 * g01 + w11 * g11;
-    float b = w00 * b00 + w10 * b10 + w01 * b01 + w11 * b11;
-    
-    // Convert back to premultiplied form
-    float alphaNorm = alpha / maxChan16F;
-    result.red = static_cast<A_u_short>(CLAMP(r * alphaNorm, 0.0f, maxChan16F) + 0.5f);
-    result.green = static_cast<A_u_short>(CLAMP(g * alphaNorm, 0.0f, maxChan16F) + 0.5f);
-    result.blue = static_cast<A_u_short>(CLAMP(b * alphaNorm, 0.0f, maxChan16F) + 0.5f);
+    // Direct copy - no interpolation, no color bleeding
+    result = *p;
 
     return result;
 }
