@@ -568,8 +568,8 @@ jobs:
               echo "::error::Plugin binary not found at $BINARY_PATH"
               exit 1
             fi
-            nm -gU "$BINARY_PATH" | grep -q " _MultiSlicerEntry$" || {
-              echo "::error::MultiSlicerEntry not exported"
+            nm -gU "$BINARY_PATH" | grep -q " _EffectMain$" || {
+              echo "::error::EffectMain not exported"
               exit 1
             }
             nm -gU "$BINARY_PATH" | grep -q " _PluginDataEntryFunction2$" || {
@@ -787,13 +787,13 @@ jobs:
           Write-Host "Running dumpbin on $artifactPath"
           $dumpbinOutput = & $dumpbinPath /EXPORTS $artifactPath 2>&1
           $dumpbinOutput | ForEach-Object { Write-Host $_ }
-          $hasEffectMain = $dumpbinOutput -match '\bMultiSlicerEntry\b'
+          $hasEffectMain = $dumpbinOutput -match '\bEffectMain\b'
           $hasPluginData = $dumpbinOutput -match '\bPluginDataEntryFunction2\b'
           if (-not $hasEffectMain -or -not $hasPluginData) {
             Write-Host "::error::Required exports not found in MultiSlicer.aex"
             exit 1
           }
-          Write-Host "✓ Verified exports: MultiSlicerEntry, PluginDataEntryFunction2"
+          Write-Host "✓ Verified exports: EffectMain, PluginDataEntryFunction2"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
