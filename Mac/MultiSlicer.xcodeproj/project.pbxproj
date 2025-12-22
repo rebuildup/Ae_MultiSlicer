@@ -203,6 +203,12 @@
 				GENERATE_PKGINFO_FILE = YES;
 				INFOPLIST_FILE = "MultiSlicer.plugin-Info.plist";
 				INSTALL_PATH = "$(HOME)/Library/Bundles";
+				OTHER_LDFLAGS = (
+					"-exported_symbol",
+					"_EffectMain",
+					"-exported_symbol",
+					"_PluginDataEntryFunction2",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.adobe.AfterEffects.MultiSlicer;
 				PRODUCT_NAME = MultiSlicer;
 				SDKROOT = macosx;
