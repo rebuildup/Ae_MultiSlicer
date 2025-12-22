@@ -608,6 +608,68 @@ jobs:
             exit 1
           }
 
+          $outputDir = Join-Path (Get-Location).Path "..\output"
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+          
+          Write-Host "Build configuration:"
+          Write-Host "  Configuration: Release"
+          Write-Host "  Platform: x64"
+          
+          msbuild MultiSlicer.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /t:Build `
+            /v:normal `
+            /m `
+            /nologo
+          
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host ""
+            Write-Host "Error: Build failed (exit code: $LASTEXITCODE)"
+            Write-Host ""
+            Write-Host "Checking SDK structure:"
+            Write-Host "  SDK Root: $env:SDK_ROOT"
+            Write-Host "  Headers: $(Test-Path "$env:SDK_ROOT\Headers")"
+            Write-Host "  Util: $(Test-Path "$env:SDK_ROOT\Util")"
+            Write-Host "  PiPLTool: $(Test-Path "$env:SDK_ROOT\Resources\PiPLTool.exe")"
+            exit 1
+          }
+          
+          Write-Host "Build successful"
+          
+          # Find build artifact
+          Write-Host "Searching for build artifact..."
+          
+          $searchPaths = @(
+            "x64\Release\MultiSlicer.aex",
+            "..\output\MultiSlicer.aex",
+            "Release\MultiSlicer.aex",
+            ".\MultiSlicer.aex"
+          )
+          
+          $aexPath = $null
+          foreach ($path in $searchPaths) {
+            if (Test-Path $path) {
+              $aexPath = Get-Item $path
+              break
+            }
+          }
+          
+          if (-not $aexPath) {
+            $aexPath = Get-ChildItem -Path . -Filter "MultiSlicer.aex" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          
+          if ($aexPath) {
+            $artifactsDir = "${{ github.workspace }}\artifacts"
+            New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
+            Copy-Item -Path $aexPath.FullName -Destination $artifactsDir -Force
+            Write-Host "Artifact copied: $artifactsDir\MultiSlicer.aex"
+          } else {
+            Write-Host "Error: Build artifact not found"
+            Get-ChildItem -Recurse -Depth 3 | Where-Object { $_.Extension -eq ".aex" -or $_.Name -like "*.obj" } | Select-Object FullName | Format-Table -AutoSize
+            exit 1
+          }
+
       - name: Code Sign Plugin (Mac)
         if: matrix.platform == 'mac'
         env:

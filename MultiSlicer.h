@@ -111,6 +111,15 @@ extern "C" {
         PF_ParamDef     *params[],
         PF_LayerDef     *output,
         void            *extra);
+
+    DllExport
+    PF_Err
+    PluginDataEntryFunction2(
+        PF_PluginDataPtr inPtr,
+        PF_PluginDataCB2 inPluginDataCallBackPtr,
+        SPBasicSuite* inSPBasicSuitePtr,
+        const char* inHostName,
+        const char* inHostVersion);
 }
 
 #endif // MULTISLICER_H
