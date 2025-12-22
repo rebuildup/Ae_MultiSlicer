@@ -21,7 +21,7 @@ resource 'PiPL' (16000) {
 		},
 #ifdef AE_OS_WIN
 	#ifdef AE_PROC_INTELx64
-		CodeWin64X86 {"EffectMain"},
+		CodeWin64X86 {"MultiSlicerEntry"},
 	#endif
 #else
 		CodeMacIntel64 {"MultiSlicerEntry"},
