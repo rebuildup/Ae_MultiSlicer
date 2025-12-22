@@ -559,6 +559,22 @@ jobs:
           fi
           
           if [ -n "$PLUGIN_PATH" ]; then
+            echo "Verifying exported entry points..."
+            BINARY_PATH="$PLUGIN_PATH/Contents/MacOS/MultiSlicer"
+            if [ ! -f "$BINARY_PATH" ]; then
+              echo "::error::Plugin binary not found at $BINARY_PATH"
+              exit 1
+            fi
+            nm -gU "$BINARY_PATH" | grep -q " _EffectMain$" || {
+              echo "::error::EffectMain not exported"
+              exit 1
+            }
+            nm -gU "$BINARY_PATH" | grep -q " _PluginDataEntryFunction2$" || {
+              echo "::error::PluginDataEntryFunction2 not exported"
+              exit 1
+            }
+            echo "✓ Verified exports: EffectMain, PluginDataEntryFunction2"
+
             mkdir -p "${{ github.workspace }}/artifacts"
             cp -R "$PLUGIN_PATH" "${{ github.workspace }}/artifacts/"
             echo "Artifact copied: artifacts/MultiSlicer.plugin"
@@ -683,5 +699,4 @@ jobs:
           path: artifacts/
           retention-days: 30
           if-no-files-found: error
-
 

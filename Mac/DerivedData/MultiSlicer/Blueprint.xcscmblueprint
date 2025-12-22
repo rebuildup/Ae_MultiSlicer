@@ -1,0 +1,23 @@
+{
+  "DVTSourceControlWorkspaceBlueprintPrimaryRemoteRepositoryKey" : "D3AC8E10A5CB86B4DC8F019095B1C4752F82FB61",
+  "DVTSourceControlWorkspaceBlueprintWorkingCopyRepositoryLocationsKey" : {
+
+  },
+  "DVTSourceControlWorkspaceBlueprintWorkingCopyStatesKey" : {
+    "D3AC8E10A5CB86B4DC8F019095B1C4752F82FB61" : 0
+  },
+  "DVTSourceControlWorkspaceBlueprintIdentifierKey" : "50A6E919-D453-4060-B651-F1049C374B20",
+  "DVTSourceControlWorkspaceBlueprintWorkingCopyPathsKey" : {
+    "D3AC8E10A5CB86B4DC8F019095B1C4752F82FB61" : "Ae_MultiSlicer\/"
+  },
+  "DVTSourceControlWorkspaceBlueprintNameKey" : "MultiSlicer",
+  "DVTSourceControlWorkspaceBlueprintVersion" : 204,
+  "DVTSourceControlWorkspaceBlueprintRelativePathToProjectKey" : "Mac\/MultiSlicer.xcodeproj",
+  "DVTSourceControlWorkspaceBlueprintRemoteRepositoriesKey" : [
+    {
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositoryURLKey" : "https:\/\/github.com\/rebuildup\/Ae_MultiSlicer",
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositorySystemKey" : "com.apple.dt.Xcode.sourcecontrol.Git",
+      "DVTSourceControlWorkspaceBlueprintRemoteRepositoryIdentifierKey" : "D3AC8E10A5CB86B4DC8F019095B1C4752F82FB61"
+    }
+  ]
+}
