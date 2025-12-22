@@ -198,6 +198,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.adobe.AfterEffects.MultiSlicer;
 				PRODUCT_NAME = MultiSlicer;
 				SDKROOT = macosx;
+				OTHER_LDFLAGS = "-exported_symbol _EffectMain -exported_symbol _PluginDataEntryFunction2";
 				ZERO_LINK = NO;
 			};
 			name = Debug;
