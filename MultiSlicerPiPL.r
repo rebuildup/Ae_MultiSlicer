@@ -24,8 +24,8 @@ resource 'PiPL' (16000) {
 		CodeWin64X86 {"EffectMain"},
 	#endif
 #else
-		CodeMacIntel64 {"EffectMain"},
-		CodeMacARM64 {"EffectMain"},
+		CodeMacIntel64 {"MultiSlicerEntry"},
+		CodeMacARM64 {"MultiSlicerEntry"},
 #endif
 		/* [6] */
 		AE_PiPL_Version {

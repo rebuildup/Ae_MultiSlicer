@@ -568,8 +568,8 @@ jobs:
               echo "::error::Plugin binary not found at $BINARY_PATH"
               exit 1
             fi
-            nm -gU "$BINARY_PATH" | grep -q " _EffectMain$" || {
-              echo "::error::EffectMain not exported"
+            nm -gU "$BINARY_PATH" | grep -q " _MultiSlicerEntry$" || {
+              echo "::error::MultiSlicerEntry not exported"
               exit 1
             }
             nm -gU "$BINARY_PATH" | grep -q " _PluginDataEntryFunction2$" || {
