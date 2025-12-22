@@ -627,6 +627,15 @@ jobs:
               exit 1
             fi
 
+            # Apply ad-hoc code signing (required for macOS 14+)
+            echo "Applying ad-hoc code signing..."
+            codesign --force --deep --sign - "$PLUGIN_PATH"
+            echo "Verifying code signature..."
+            codesign --verify --deep --strict --verbose=2 "$PLUGIN_PATH" || {
+              echo "::warning::Ad-hoc signing verification failed, but continuing..."
+            }
+            echo "✓ Ad-hoc code signing applied"
+
             mkdir -p "${{ github.workspace }}/artifacts"
             cp -R "$PLUGIN_PATH" "${{ github.workspace }}/artifacts/"
             echo "Artifact copied: artifacts/MultiSlicer.plugin"

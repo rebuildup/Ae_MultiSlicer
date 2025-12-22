@@ -1,10 +1,16 @@
 #include "AEConfig.h"
 #include "AE_EffectVers.h"
 
-#ifndef AE_OS_WIN
+/* Include AE_General.r for resource definitions on Mac */
+#ifdef AE_OS_MAC
 	#include <AE_General.r>
 #endif
-	
+
+#if defined(__MACH__) && !defined(AE_OS_MAC)
+	#define AE_OS_MAC 1
+	#include <AE_General.r>
+#endif
+
 resource 'PiPL' (16000) {
 	{	/* array properties: 12 elements */
 		/* [1] */
@@ -19,11 +25,13 @@ resource 'PiPL' (16000) {
 		Category {
 			"361do_plugins"
 		},
+		/* [4] [5] Code entry points */
 #ifdef AE_OS_WIN
 	#ifdef AE_PROC_INTELx64
 		CodeWin64X86 {"EffectMain"},
 	#endif
 #else
+		/* Mac: Both Intel and ARM entry points */
 		CodeMacIntel64 {"EffectMain"},
 		CodeMacARM64 {"EffectMain"},
 #endif
