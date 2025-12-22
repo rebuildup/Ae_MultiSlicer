@@ -559,6 +559,9 @@ jobs:
           fi
           
           if [ -n "$PLUGIN_PATH" ]; then
+            echo "Generating PiPL resource..."
+            "${{ github.workspace }}/Mac/build_pipl.sh" "$PLUGIN_DIR" "$PLUGIN_PATH" "$SDK_ROOT"
+
             echo "Verifying exported entry points..."
             BINARY_PATH="$PLUGIN_PATH/Contents/MacOS/MultiSlicer"
             if [ ! -f "$BINARY_PATH" ]; then
