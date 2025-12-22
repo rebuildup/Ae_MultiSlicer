@@ -604,6 +604,44 @@ jobs:
             Get-ChildItem
             exit 1
           }
+
+      - name: Code Sign Plugin (Mac)
+        if: matrix.platform == 'mac'
+        env:
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          MACOS_CODESIGN_P12: ${{ secrets.MACOS_CODESIGN_P12 }}
+          MACOS_CODESIGN_PASSWORD: ${{ secrets.MACOS_CODESIGN_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          set -e
+          
+          if [ -z "$MACOS_CODESIGN_IDENTITY" ] || [ -z "$MACOS_CODESIGN_P12" ] || [ -z "$MACOS_CODESIGN_PASSWORD" ]; then
+            echo "::warning::Code signing secrets not set; skipping code signing"
+            exit 0
+          fi
+          
+          PLUGIN_ARTIFACT_PATH="${{ github.workspace }}/artifacts/MultiSlicer.plugin"
+          if [ ! -d "$PLUGIN_ARTIFACT_PATH" ]; then
+            echo "::error::Plugin artifact not found at $PLUGIN_ARTIFACT_PATH"
+            exit 1
+          fi
+          
+          KEYCHAIN_PASSWORD="${MACOS_KEYCHAIN_PASSWORD:-temp_keychain_password}"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/codesign.p12"
+          
+          echo "$MACOS_CODESIGN_P12" | base64 --decode > "$CERT_PATH"
+          
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$MACOS_CODESIGN_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          
+          echo "Code signing plugin..."
+          codesign --force --deep --options runtime --timestamp --sign "$MACOS_CODESIGN_IDENTITY" "$PLUGIN_ARTIFACT_PATH"
+          codesign --verify --deep --strict --verbose=2 "$PLUGIN_ARTIFACT_PATH"
           
           $outputDir = Join-Path (Get-Location).Path "..\output"
           New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
@@ -699,4 +737,3 @@ jobs:
           path: artifacts/
           retention-days: 30
           if-no-files-found: error
-
