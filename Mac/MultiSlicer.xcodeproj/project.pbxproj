@@ -159,7 +159,7 @@
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PREFIX_HEADER = "$(SYSTEM_LIBRARY_DIR)/Frameworks/Cocoa.framework/Headers/Cocoa.h";
 				GCC_REUSE_STRINGS = NO;
-				GCC_SYMBOLS_PRIVATE_EXTERN = YES;
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
 				GCC_THREADSAFE_STATICS = NO;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
 				GCC_WARN_CHECK_SWITCH_STATEMENTS = YES;
@@ -188,11 +188,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = NO;
+
 				GCC_MODEL_TUNING = G5;
 				GENERATE_PKGINFO_FILE = YES;
 				INFOPLIST_FILE = "MultiSlicer.plugin-Info.plist";
 				INSTALL_PATH = "$(HOME)/Library/Bundles";
-				EXPORT_SYMBOLS = YES;
+
 				PRODUCT_BUNDLE_IDENTIFIER = com.adobe.AfterEffects.MultiSlicer;
 				PRODUCT_NAME = MultiSlicer;
 				SDKROOT = macosx;
