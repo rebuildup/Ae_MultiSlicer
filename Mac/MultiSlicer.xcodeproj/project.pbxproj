@@ -178,6 +178,11 @@
 				);
 				ONLY_ACTIVE_ARCH = NO;
 				REZ_PREPROCESSOR_DEFINITIONS = __MACH__;
+				REZ_SEARCH_PATHS = (
+					../../../Headers,
+					../../../Headers/SP,
+					../../../Resources,
+				);
 				SDKROOT = macosx;
 				STRIP_INSTALLED_PRODUCT = NO;
 				WRAPPER_EXTENSION = plugin;
@@ -189,8 +194,9 @@
 			buildSettings = {
 				COMBINE_HIDPI_IMAGES = YES;
 				DEAD_CODE_STRIPPING = NO;
-
+				EXPORTED_SYMBOLS_FILE = MultiSlicer.exp;
 				GCC_MODEL_TUNING = G5;
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
 				GENERATE_PKGINFO_FILE = YES;
 				INFOPLIST_FILE = "MultiSlicer.plugin-Info.plist";
 				INSTALL_PATH = "$(HOME)/Library/Bundles";

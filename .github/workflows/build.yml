@@ -526,6 +526,10 @@ jobs:
             -arch arm64 \
             -destination 'platform=macOS' \
             CONFIGURATION_BUILD_DIR="$(pwd)/build" \
+            HEADER_SEARCH_PATHS="$SDK_ROOT/Headers $SDK_ROOT/Util $SDK_ROOT/Headers/SP $SDK_ROOT/Resources" \
+            REZ_SEARCH_PATHS="$SDK_ROOT/Headers $SDK_ROOT/Headers/SP $SDK_ROOT/Resources" \
+            GCC_SYMBOLS_PRIVATE_EXTERN=NO \
+            EXPORTED_SYMBOLS_FILE="$(pwd)/MultiSlicer.exp" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -562,14 +566,42 @@ jobs:
             echo "Generating PiPL resource..."
             "${{ github.workspace }}/Mac/build_pipl.sh" "$PLUGIN_DIR" "$PLUGIN_PATH" "$SDK_ROOT"
 
-            echo "Verifying exported entry points..."
+            echo "=== Verifying Plugin Bundle Structure ==="
+            echo "Plugin path: $PLUGIN_PATH"
+            ls -laR "$PLUGIN_PATH" || true
+            
             BINARY_PATH="$PLUGIN_PATH/Contents/MacOS/MultiSlicer"
+            RSRC_PATH="$PLUGIN_PATH/Contents/Resources/MultiSlicer.rsrc"
+            INFO_PATH="$PLUGIN_PATH/Contents/Info.plist"
+            
+            # Verify Info.plist
+            if [ ! -f "$INFO_PATH" ]; then
+              echo "::warning::Info.plist not found, this may cause issues"
+            else
+              echo "✓ Info.plist found"
+            fi
+            
+            # Verify binary
             if [ ! -f "$BINARY_PATH" ]; then
               echo "::error::Plugin binary not found at $BINARY_PATH"
               exit 1
             fi
+            echo "✓ Binary found: $BINARY_PATH"
+            
+            # Verify binary architectures
+            echo "Binary architectures:"
+            file "$BINARY_PATH" || true
+            lipo -info "$BINARY_PATH" || true
+            
+            # Verify exported symbols
+            echo "Verifying exported entry points..."
+            echo "All exported symbols:"
+            nm -gU "$BINARY_PATH" | head -20 || true
+            
             nm -gU "$BINARY_PATH" | grep -q " _EffectMain$" || {
               echo "::error::EffectMain not exported"
+              echo "Available exports containing 'Effect' or 'Main':"
+              nm -gU "$BINARY_PATH" | grep -iE "(effect|main)" || true
               exit 1
             }
             nm -gU "$BINARY_PATH" | grep -q " _PluginDataEntryFunction2$" || {
@@ -577,6 +609,23 @@ jobs:
               exit 1
             }
             echo "✓ Verified exports: EffectMain, PluginDataEntryFunction2"
+            
+            # Verify PiPL resource
+            if [ ! -f "$RSRC_PATH" ]; then
+              echo "::error::PiPL resource not found at $RSRC_PATH"
+              exit 1
+            fi
+            echo "✓ PiPL resource found: $RSRC_PATH ($(ls -la "$RSRC_PATH" | awk '{print $5}') bytes)"
+            
+            # Verify PiPL content
+            if strings "$RSRC_PATH" | grep -q "EffectMain"; then
+              echo "✓ PiPL contains 'EffectMain' entry point"
+            else
+              echo "::error::PiPL resource does not contain 'EffectMain' entry point"
+              echo "PiPL resource content:"
+              strings "$RSRC_PATH" || true
+              exit 1
+            fi
 
             mkdir -p "${{ github.workspace }}/artifacts"
             cp -R "$PLUGIN_PATH" "${{ github.workspace }}/artifacts/"
