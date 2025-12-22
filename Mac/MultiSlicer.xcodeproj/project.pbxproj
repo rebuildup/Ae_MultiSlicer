@@ -204,8 +204,7 @@
 				INFOPLIST_FILE = "MultiSlicer.plugin-Info.plist";
 				INSTALL_PATH = "$(HOME)/Library/Bundles";
 				OTHER_LDFLAGS = (
-					"-Wl,-exported_symbol,_EffectMain",
-					"-Wl,-exported_symbol,_PluginDataEntryFunction2",
+					"-Wl,-exported_symbols_list,$(SRCROOT)/exports.txt",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.adobe.AfterEffects.MultiSlicer;
 				PRODUCT_NAME = MultiSlicer;
