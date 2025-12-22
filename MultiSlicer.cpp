@@ -860,7 +860,7 @@ extern "C" DllExport PF_Err PluginDataEntryFunction2(
       "361do MultiSlicer",                            // Match Name
       "361do_plugins",                                // Category
       AE_RESERVED_INFO,                               // Reserved Info
-      "EffectMain",                                   // Entry point
+      "MultiSlicerEntry",                             // Entry point
       "https://github.com/rebuildup/Ae_MultiSlicer"); // support URL
 
   return result;
