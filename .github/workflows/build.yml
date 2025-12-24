@@ -738,12 +738,14 @@ jobs:
         run: |
           set -e
           
+          PLUGIN_ARTIFACT_PATH="${{ github.workspace }}/artifacts/MultiSlicer.plugin"
+          
           if [ -z "$MACOS_CODESIGN_IDENTITY" ] || [ -z "$MACOS_CODESIGN_P12" ] || [ -z "$MACOS_CODESIGN_PASSWORD" ]; then
-            echo "::warning::Code signing secrets not set; skipping code signing"
+            echo "::warning::Code signing secrets not set; applying ad-hoc signature only"
+            codesign --force --deep --sign - "$PLUGIN_ARTIFACT_PATH"
             exit 0
           fi
           
-          PLUGIN_ARTIFACT_PATH="${{ github.workspace }}/artifacts/MultiSlicer.plugin"
           if [ ! -d "$PLUGIN_ARTIFACT_PATH" ]; then
             echo "::error::Plugin artifact not found at $PLUGIN_ARTIFACT_PATH"
             exit 1
@@ -753,6 +755,7 @@ jobs:
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
           CERT_PATH="$RUNNER_TEMP/codesign.p12"
           
+          echo "Setting up keychain..."
           echo "$MACOS_CODESIGN_P12" | base64 --decode > "$CERT_PATH"
           
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -762,71 +765,71 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           
-          echo "Code signing plugin..."
+          echo "Code signing plugin with Developer ID..."
           codesign --force --deep --options runtime --timestamp --sign "$MACOS_CODESIGN_IDENTITY" "$PLUGIN_ARTIFACT_PATH"
+          
+          echo "Verifying code signature..."
           codesign --verify --deep --strict --verbose=2 "$PLUGIN_ARTIFACT_PATH"
           
-          $outputDir = Join-Path (Get-Location).Path "..\output"
-          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+          echo "✓ Code signing completed successfully"
           
-          Write-Host "Build configuration:"
-          Write-Host "  Configuration: Release"
-          Write-Host "  Platform: x64"
+          # Cleanup
+          rm -f "$CERT_PATH"
+
+      - name: Notarize Plugin (Mac)
+        if: matrix.platform == 'mac'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          set -e
           
-          msbuild MultiSlicer.sln `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /t:Build `
-            /v:normal `
-            /m `
-            /nologo
+          PLUGIN_ARTIFACT_PATH="${{ github.workspace }}/artifacts/MultiSlicer.plugin"
           
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host ""
-            Write-Host "Error: Build failed (exit code: $LASTEXITCODE)"
-            Write-Host ""
-            Write-Host "Checking SDK structure:"
-            Write-Host "  SDK Root: $env:SDK_ROOT"
-            Write-Host "  Headers: $(Test-Path "$env:SDK_ROOT\Headers")"
-            Write-Host "  Util: $(Test-Path "$env:SDK_ROOT\Util")"
-            Write-Host "  PiPLTool: $(Test-Path "$env:SDK_ROOT\Resources\PiPLTool.exe")"
+          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_ID_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
+            echo "::warning::Notarization secrets not set; skipping notarization"
+            exit 0
+          fi
+          
+          if [ -z "$MACOS_CODESIGN_IDENTITY" ]; then
+            echo "::warning::No code signing identity; skipping notarization (ad-hoc signed plugins cannot be notarized)"
+            exit 0
+          fi
+          
+          if [ ! -d "$PLUGIN_ARTIFACT_PATH" ]; then
+            echo "::error::Plugin artifact not found at $PLUGIN_ARTIFACT_PATH"
             exit 1
-          }
+          fi
           
-          Write-Host "Build successful"
+          echo "Creating ZIP archive for notarization..."
+          ZIP_PATH="$RUNNER_TEMP/MultiSlicer.zip"
+          ditto -c -k --keepParent "$PLUGIN_ARTIFACT_PATH" "$ZIP_PATH"
           
-          # Find build artifact
-          Write-Host "Searching for build artifact..."
+          echo "Submitting to Apple for notarization..."
+          echo "This may take several minutes..."
           
-          $searchPaths = @(
-            "x64\Release\MultiSlicer.aex",
-            "..\output\MultiSlicer.aex",
-            "Release\MultiSlicer.aex",
-            ".\MultiSlicer.aex"
-          )
+          xcrun notarytool submit "$ZIP_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --timeout 30m
           
-          $aexPath = $null
-          foreach ($path in $searchPaths) {
-            if (Test-Path $path) {
-              $aexPath = Get-Item $path
-              break
-            }
-          }
+          echo "Stapling notarization ticket to plugin..."
+          xcrun stapler staple "$PLUGIN_ARTIFACT_PATH"
           
-          if (-not $aexPath) {
-            $aexPath = Get-ChildItem -Path . -Filter "MultiSlicer.aex" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
+          echo "Verifying notarization..."
+          xcrun stapler validate "$PLUGIN_ARTIFACT_PATH"
+          spctl --assess --type exec --verbose=2 "$PLUGIN_ARTIFACT_PATH" || true
           
-          if ($aexPath) {
-            $artifactsDir = "${{ github.workspace }}\artifacts"
-            New-Item -ItemType Directory -Path $artifactsDir -Force | Out-Null
-            Copy-Item -Path $aexPath.FullName -Destination $artifactsDir -Force
-            Write-Host "Artifact copied: $artifactsDir\MultiSlicer.aex"
-          } else {
-            Write-Host "Error: Build artifact not found"
-            Get-ChildItem -Recurse -Depth 3 | Where-Object { $_.Extension -eq ".aex" -or $_.Name -like "*.obj" } | Select-Object FullName | Format-Table -AutoSize
-            exit 1
-          }
+          echo "✓ Notarization completed successfully"
+          
+          # Cleanup
+          rm -f "$ZIP_PATH"
+
+
       - name: Verify exported entry points (Windows)
         if: matrix.platform == 'win'
         shell: pwsh
