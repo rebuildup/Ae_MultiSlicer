@@ -139,8 +139,8 @@ static float GetRandomValue(A_long seed, A_long index) {
   return result;
 }
 
-// Bilinear interpolation with proper transparent pixel handling
-// Uses straight alpha to prevent color bleeding at transparent boundaries
+// Bilinear interpolation that completely excludes transparent pixels
+// Transparent pixels (alpha=0) do not participate in interpolation at all
 static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
                                    const SliceContext *ctx) {
   PF_Pixel result = {0, 0, 0, 0};
@@ -184,57 +184,70 @@ static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
   float w01 = (1.0f - fracX) * fracY;
   float w11 = fracX * fracY;
 
-  // Interpolate alpha
-  float alphaSum =
-      w00 * p00.alpha + w10 * p10.alpha + w01 * p01.alpha + w11 * p11.alpha;
+  // Only include pixels with alpha > 0 in interpolation
+  // Zero out weights for transparent pixels
+  if (p00.alpha == 0)
+    w00 = 0.0f;
+  if (p10.alpha == 0)
+    w10 = 0.0f;
+  if (p01.alpha == 0)
+    w01 = 0.0f;
+  if (p11.alpha == 0)
+    w11 = 0.0f;
 
-  if (alphaSum < 0.5f) {
-    return result; // Fully transparent
+  float totalWeight = w00 + w10 + w01 + w11;
+
+  // If all pixels are transparent, return transparent
+  if (totalWeight < 0.0001f) {
+    return result;
   }
 
-  result.alpha = static_cast<A_u_char>(CLAMP(alphaSum + 0.5f, 0.0f, 255.0f));
+  // Renormalize weights
+  float invWeight = 1.0f / totalWeight;
+  w00 *= invWeight;
+  w10 *= invWeight;
+  w01 *= invWeight;
+  w11 *= invWeight;
 
-  // Interpolate RGB in straight alpha space to avoid black bleeding
-  // Weight by alpha to give more importance to opaque pixels
-  float colorWeightSum = 0.0f;
-  float rSum = 0.0f, gSum = 0.0f, bSum = 0.0f;
+  // Now interpolate using only opaque pixels (in straight alpha space)
+  float rSum = 0.0f, gSum = 0.0f, bSum = 0.0f, aSum = 0.0f;
 
-  auto addColorContribution = [&](const PF_Pixel &p, float weight) {
-    if (p.alpha > 0) {
-      float alphaWeight = weight * (static_cast<float>(p.alpha) / 255.0f);
+  auto addContribution = [&](const PF_Pixel &p, float weight) {
+    if (weight > 0.0f && p.alpha > 0) {
+      float a = static_cast<float>(p.alpha);
+      float invAlpha = 255.0f / a;
       // Convert from premultiplied to straight
-      float invAlpha = 255.0f / static_cast<float>(p.alpha);
-      rSum += alphaWeight * static_cast<float>(p.red) * invAlpha;
-      gSum += alphaWeight * static_cast<float>(p.green) * invAlpha;
-      bSum += alphaWeight * static_cast<float>(p.blue) * invAlpha;
-      colorWeightSum += alphaWeight;
+      rSum += weight * static_cast<float>(p.red) * invAlpha;
+      gSum += weight * static_cast<float>(p.green) * invAlpha;
+      bSum += weight * static_cast<float>(p.blue) * invAlpha;
+      aSum += weight * a;
     }
   };
 
-  addColorContribution(p00, w00);
-  addColorContribution(p10, w10);
-  addColorContribution(p01, w01);
-  addColorContribution(p11, w11);
+  addContribution(p00, w00);
+  addContribution(p10, w10);
+  addContribution(p01, w01);
+  addContribution(p11, w11);
 
-  if (colorWeightSum > 0.001f) {
+  // Set alpha (interpolated from opaque pixels only)
+  result.alpha = static_cast<A_u_char>(CLAMP(aSum + 0.5f, 0.0f, 255.0f));
+
+  if (result.alpha > 0) {
     // Convert back to premultiplied
     float alphaNorm = static_cast<float>(result.alpha) / 255.0f;
-    float avgR = rSum / colorWeightSum;
-    float avgG = gSum / colorWeightSum;
-    float avgB = bSum / colorWeightSum;
     result.red =
-        static_cast<A_u_char>(CLAMP(avgR * alphaNorm + 0.5f, 0.0f, 255.0f));
+        static_cast<A_u_char>(CLAMP(rSum * alphaNorm + 0.5f, 0.0f, 255.0f));
     result.green =
-        static_cast<A_u_char>(CLAMP(avgG * alphaNorm + 0.5f, 0.0f, 255.0f));
+        static_cast<A_u_char>(CLAMP(gSum * alphaNorm + 0.5f, 0.0f, 255.0f));
     result.blue =
-        static_cast<A_u_char>(CLAMP(avgB * alphaNorm + 0.5f, 0.0f, 255.0f));
+        static_cast<A_u_char>(CLAMP(bSum * alphaNorm + 0.5f, 0.0f, 255.0f));
   }
 
   return result;
 }
 
-// Bilinear interpolation with proper transparent pixel handling (16-bit)
-// Uses straight alpha to prevent color bleeding at transparent boundaries
+// Bilinear interpolation that completely excludes transparent pixels (16-bit)
+// Transparent pixels (alpha=0) do not participate in interpolation at all
 static PF_Pixel16 SampleSourcePixel16(float srcX, float srcY,
                                       const SliceContext *ctx) {
   PF_Pixel16 result = {0, 0, 0, 0};
@@ -279,52 +292,61 @@ static PF_Pixel16 SampleSourcePixel16(float srcX, float srcY,
   float w01 = (1.0f - fracX) * fracY;
   float w11 = fracX * fracY;
 
-  // Interpolate alpha
-  float alphaSum = w00 * static_cast<float>(p00.alpha) +
-                   w10 * static_cast<float>(p10.alpha) +
-                   w01 * static_cast<float>(p01.alpha) +
-                   w11 * static_cast<float>(p11.alpha);
+  // Only include pixels with alpha > 0 in interpolation
+  if (p00.alpha == 0)
+    w00 = 0.0f;
+  if (p10.alpha == 0)
+    w10 = 0.0f;
+  if (p01.alpha == 0)
+    w01 = 0.0f;
+  if (p11.alpha == 0)
+    w11 = 0.0f;
 
-  if (alphaSum < 0.5f) {
-    return result; // Fully transparent
+  float totalWeight = w00 + w10 + w01 + w11;
+
+  // If all pixels are transparent, return transparent
+  if (totalWeight < 0.0001f) {
+    return result;
   }
 
-  result.alpha =
-      static_cast<A_u_short>(CLAMP(alphaSum + 0.5f, 0.0f, maxChan16F));
+  // Renormalize weights
+  float invWeight = 1.0f / totalWeight;
+  w00 *= invWeight;
+  w10 *= invWeight;
+  w01 *= invWeight;
+  w11 *= invWeight;
 
-  // Interpolate RGB in straight alpha space to avoid black bleeding
-  float colorWeightSum = 0.0f;
-  float rSum = 0.0f, gSum = 0.0f, bSum = 0.0f;
+  // Interpolate using only opaque pixels (in straight alpha space)
+  float rSum = 0.0f, gSum = 0.0f, bSum = 0.0f, aSum = 0.0f;
 
-  auto addColorContribution = [&](const PF_Pixel16 &p, float weight) {
-    if (p.alpha > 0) {
-      float alphaWeight = weight * (static_cast<float>(p.alpha) / maxChan16F);
-      // Convert from premultiplied to straight
-      float invAlpha = maxChan16F / static_cast<float>(p.alpha);
-      rSum += alphaWeight * static_cast<float>(p.red) * invAlpha;
-      gSum += alphaWeight * static_cast<float>(p.green) * invAlpha;
-      bSum += alphaWeight * static_cast<float>(p.blue) * invAlpha;
-      colorWeightSum += alphaWeight;
+  auto addContribution = [&](const PF_Pixel16 &p, float weight) {
+    if (weight > 0.0f && p.alpha > 0) {
+      float a = static_cast<float>(p.alpha);
+      float invAlpha = maxChan16F / a;
+      rSum += weight * static_cast<float>(p.red) * invAlpha;
+      gSum += weight * static_cast<float>(p.green) * invAlpha;
+      bSum += weight * static_cast<float>(p.blue) * invAlpha;
+      aSum += weight * a;
     }
   };
 
-  addColorContribution(p00, w00);
-  addColorContribution(p10, w10);
-  addColorContribution(p01, w01);
-  addColorContribution(p11, w11);
+  addContribution(p00, w00);
+  addContribution(p10, w10);
+  addContribution(p01, w01);
+  addContribution(p11, w11);
 
-  if (colorWeightSum > 0.001f) {
+  // Set alpha (interpolated from opaque pixels only)
+  result.alpha = static_cast<A_u_short>(CLAMP(aSum + 0.5f, 0.0f, maxChan16F));
+
+  if (result.alpha > 0) {
     // Convert back to premultiplied
     float alphaNorm = static_cast<float>(result.alpha) / maxChan16F;
-    float avgR = rSum / colorWeightSum;
-    float avgG = gSum / colorWeightSum;
-    float avgB = bSum / colorWeightSum;
     result.red = static_cast<A_u_short>(
-        CLAMP(avgR * alphaNorm + 0.5f, 0.0f, maxChan16F));
+        CLAMP(rSum * alphaNorm + 0.5f, 0.0f, maxChan16F));
     result.green = static_cast<A_u_short>(
-        CLAMP(avgG * alphaNorm + 0.5f, 0.0f, maxChan16F));
+        CLAMP(gSum * alphaNorm + 0.5f, 0.0f, maxChan16F));
     result.blue = static_cast<A_u_short>(
-        CLAMP(avgB * alphaNorm + 0.5f, 0.0f, maxChan16F));
+        CLAMP(bSum * alphaNorm + 0.5f, 0.0f, maxChan16F));
   }
 
   return result;
