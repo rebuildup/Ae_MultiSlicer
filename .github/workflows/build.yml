@@ -755,20 +755,59 @@ jobs:
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
           CERT_PATH="$RUNNER_TEMP/codesign.p12"
           
-          echo "Setting up keychain..."
-          echo "$MACOS_CODESIGN_P12" | base64 --decode > "$CERT_PATH"
+          echo "=== Setting up code signing ==="
+          echo "Identity: $MACOS_CODESIGN_IDENTITY"
           
+          # Decode the certificate
+          echo "$MACOS_CODESIGN_P12" | base64 --decode > "$CERT_PATH"
+          echo "Certificate file size: $(ls -la "$CERT_PATH" | awk '{print $5}') bytes"
+          
+          # Create and configure keychain
+          echo "Creating temporary keychain..."
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$MACOS_CODESIGN_PASSWORD" -T /usr/bin/codesign
-          security list-keychains -d user -s "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           
-          echo "Code signing plugin with Developer ID..."
-          codesign --force --deep --options runtime --timestamp --sign "$MACOS_CODESIGN_IDENTITY" "$PLUGIN_ARTIFACT_PATH"
+          # Import certificate with all necessary options
+          echo "Importing certificate..."
+          security import "$CERT_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$MACOS_CODESIGN_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security \
+            -T /usr/bin/productbuild
           
-          echo "Verifying code signature..."
+          # Add keychain to search list
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          
+          # Set partition list - allow codesign to access the key without UI prompt
+          echo "Setting partition list..."
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH" 2>/dev/null || {
+              echo "::warning::set-key-partition-list returned non-zero, but this may be okay"
+            }
+          
+          # Verify identity is available
+          echo "Verifying available signing identities..."
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+          security find-identity -v -p codesigning || true
+          
+          # Check if our identity is available
+          if ! security find-identity -v -p codesigning | grep -q "$MACOS_CODESIGN_IDENTITY"; then
+            echo "::error::Signing identity not found: $MACOS_CODESIGN_IDENTITY"
+            echo "Available identities:"
+            security find-identity -v -p codesigning
+            exit 1
+          fi
+          
+          echo "=== Code signing plugin ==="
+          codesign --force --deep --options runtime --timestamp \
+            --sign "$MACOS_CODESIGN_IDENTITY" \
+            "$PLUGIN_ARTIFACT_PATH"
+          
+          echo "=== Verifying code signature ==="
           codesign --verify --deep --strict --verbose=2 "$PLUGIN_ARTIFACT_PATH"
           
           echo "✓ Code signing completed successfully"
