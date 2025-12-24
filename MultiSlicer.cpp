@@ -139,50 +139,193 @@ static float GetRandomValue(A_long seed, A_long index) {
   return result;
 }
 
-// Sample pixel color from the source at given coordinates using nearest
-// neighbor This completely prevents color bleeding from adjacent pixels
+// Bilinear interpolation with proper transparent pixel handling
+// Uses straight alpha to prevent color bleeding at transparent boundaries
 static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
                                    const SliceContext *ctx) {
-  PF_Pixel result = {0, 0, 0, 0}; // Default to transparent black
+  PF_Pixel result = {0, 0, 0, 0};
 
-  // Use nearest neighbor (round to nearest integer)
-  A_long x = static_cast<A_long>(srcX + 0.5f);
-  A_long y = static_cast<A_long>(srcY + 0.5f);
+  // Get integer and fractional parts
+  float fx = srcX - 0.5f;
+  float fy = srcY - 0.5f;
+  A_long x0 = static_cast<A_long>(floorf(fx));
+  A_long y0 = static_cast<A_long>(floorf(fy));
+  A_long x1 = x0 + 1;
+  A_long y1 = y0 + 1;
+  float fracX = fx - static_cast<float>(x0);
+  float fracY = fy - static_cast<float>(y0);
 
-  if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
+  // Early out if completely outside
+  if (x1 < 0 || x0 >= ctx->width || y1 < 0 || y0 >= ctx->height) {
     return result;
   }
 
-  PF_Pixel *p = reinterpret_cast<PF_Pixel *>(
-      reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
-      x * static_cast<A_long>(sizeof(PF_Pixel)));
+  // Helper to read pixel safely
+  auto readPixel = [ctx](A_long x, A_long y) -> PF_Pixel {
+    PF_Pixel p = {0, 0, 0, 0};
+    if (x >= 0 && x < ctx->width && y >= 0 && y < ctx->height) {
+      PF_Pixel *ptr = reinterpret_cast<PF_Pixel *>(
+          reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
+          x * static_cast<A_long>(sizeof(PF_Pixel)));
+      p = *ptr;
+    }
+    return p;
+  };
 
-  // Direct copy - no interpolation, no color bleeding
-  result = *p;
+  // Sample 4 neighboring pixels
+  PF_Pixel p00 = readPixel(x0, y0);
+  PF_Pixel p10 = readPixel(x1, y0);
+  PF_Pixel p01 = readPixel(x0, y1);
+  PF_Pixel p11 = readPixel(x1, y1);
+
+  // Bilinear weights
+  float w00 = (1.0f - fracX) * (1.0f - fracY);
+  float w10 = fracX * (1.0f - fracY);
+  float w01 = (1.0f - fracX) * fracY;
+  float w11 = fracX * fracY;
+
+  // Interpolate alpha
+  float alphaSum =
+      w00 * p00.alpha + w10 * p10.alpha + w01 * p01.alpha + w11 * p11.alpha;
+
+  if (alphaSum < 0.5f) {
+    return result; // Fully transparent
+  }
+
+  result.alpha = static_cast<A_u_char>(CLAMP(alphaSum + 0.5f, 0.0f, 255.0f));
+
+  // Interpolate RGB in straight alpha space to avoid black bleeding
+  // Weight by alpha to give more importance to opaque pixels
+  float colorWeightSum = 0.0f;
+  float rSum = 0.0f, gSum = 0.0f, bSum = 0.0f;
+
+  auto addColorContribution = [&](const PF_Pixel &p, float weight) {
+    if (p.alpha > 0) {
+      float alphaWeight = weight * (static_cast<float>(p.alpha) / 255.0f);
+      // Convert from premultiplied to straight
+      float invAlpha = 255.0f / static_cast<float>(p.alpha);
+      rSum += alphaWeight * static_cast<float>(p.red) * invAlpha;
+      gSum += alphaWeight * static_cast<float>(p.green) * invAlpha;
+      bSum += alphaWeight * static_cast<float>(p.blue) * invAlpha;
+      colorWeightSum += alphaWeight;
+    }
+  };
+
+  addColorContribution(p00, w00);
+  addColorContribution(p10, w10);
+  addColorContribution(p01, w01);
+  addColorContribution(p11, w11);
+
+  if (colorWeightSum > 0.001f) {
+    // Convert back to premultiplied
+    float alphaNorm = static_cast<float>(result.alpha) / 255.0f;
+    float avgR = rSum / colorWeightSum;
+    float avgG = gSum / colorWeightSum;
+    float avgB = bSum / colorWeightSum;
+    result.red =
+        static_cast<A_u_char>(CLAMP(avgR * alphaNorm + 0.5f, 0.0f, 255.0f));
+    result.green =
+        static_cast<A_u_char>(CLAMP(avgG * alphaNorm + 0.5f, 0.0f, 255.0f));
+    result.blue =
+        static_cast<A_u_char>(CLAMP(avgB * alphaNorm + 0.5f, 0.0f, 255.0f));
+  }
 
   return result;
 }
 
-// Sample 16-bit pixel color from the source using nearest neighbor
-// This completely prevents color bleeding from adjacent pixels
+// Bilinear interpolation with proper transparent pixel handling (16-bit)
+// Uses straight alpha to prevent color bleeding at transparent boundaries
 static PF_Pixel16 SampleSourcePixel16(float srcX, float srcY,
                                       const SliceContext *ctx) {
   PF_Pixel16 result = {0, 0, 0, 0};
+  const float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
 
-  // Use nearest neighbor (round to nearest integer)
-  A_long x = static_cast<A_long>(srcX + 0.5f);
-  A_long y = static_cast<A_long>(srcY + 0.5f);
+  // Get integer and fractional parts
+  float fx = srcX - 0.5f;
+  float fy = srcY - 0.5f;
+  A_long x0 = static_cast<A_long>(floorf(fx));
+  A_long y0 = static_cast<A_long>(floorf(fy));
+  A_long x1 = x0 + 1;
+  A_long y1 = y0 + 1;
+  float fracX = fx - static_cast<float>(x0);
+  float fracY = fy - static_cast<float>(y0);
 
-  if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
+  // Early out if completely outside
+  if (x1 < 0 || x0 >= ctx->width || y1 < 0 || y0 >= ctx->height) {
     return result;
   }
 
-  PF_Pixel16 *p = reinterpret_cast<PF_Pixel16 *>(
-      reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
-      x * static_cast<A_long>(sizeof(PF_Pixel16)));
+  // Helper to read pixel safely
+  auto readPixel = [ctx](A_long x, A_long y) -> PF_Pixel16 {
+    PF_Pixel16 p = {0, 0, 0, 0};
+    if (x >= 0 && x < ctx->width && y >= 0 && y < ctx->height) {
+      PF_Pixel16 *ptr = reinterpret_cast<PF_Pixel16 *>(
+          reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
+          x * static_cast<A_long>(sizeof(PF_Pixel16)));
+      p = *ptr;
+    }
+    return p;
+  };
 
-  // Direct copy - no interpolation, no color bleeding
-  result = *p;
+  // Sample 4 neighboring pixels
+  PF_Pixel16 p00 = readPixel(x0, y0);
+  PF_Pixel16 p10 = readPixel(x1, y0);
+  PF_Pixel16 p01 = readPixel(x0, y1);
+  PF_Pixel16 p11 = readPixel(x1, y1);
+
+  // Bilinear weights
+  float w00 = (1.0f - fracX) * (1.0f - fracY);
+  float w10 = fracX * (1.0f - fracY);
+  float w01 = (1.0f - fracX) * fracY;
+  float w11 = fracX * fracY;
+
+  // Interpolate alpha
+  float alphaSum = w00 * static_cast<float>(p00.alpha) +
+                   w10 * static_cast<float>(p10.alpha) +
+                   w01 * static_cast<float>(p01.alpha) +
+                   w11 * static_cast<float>(p11.alpha);
+
+  if (alphaSum < 0.5f) {
+    return result; // Fully transparent
+  }
+
+  result.alpha =
+      static_cast<A_u_short>(CLAMP(alphaSum + 0.5f, 0.0f, maxChan16F));
+
+  // Interpolate RGB in straight alpha space to avoid black bleeding
+  float colorWeightSum = 0.0f;
+  float rSum = 0.0f, gSum = 0.0f, bSum = 0.0f;
+
+  auto addColorContribution = [&](const PF_Pixel16 &p, float weight) {
+    if (p.alpha > 0) {
+      float alphaWeight = weight * (static_cast<float>(p.alpha) / maxChan16F);
+      // Convert from premultiplied to straight
+      float invAlpha = maxChan16F / static_cast<float>(p.alpha);
+      rSum += alphaWeight * static_cast<float>(p.red) * invAlpha;
+      gSum += alphaWeight * static_cast<float>(p.green) * invAlpha;
+      bSum += alphaWeight * static_cast<float>(p.blue) * invAlpha;
+      colorWeightSum += alphaWeight;
+    }
+  };
+
+  addColorContribution(p00, w00);
+  addColorContribution(p10, w10);
+  addColorContribution(p01, w01);
+  addColorContribution(p11, w11);
+
+  if (colorWeightSum > 0.001f) {
+    // Convert back to premultiplied
+    float alphaNorm = static_cast<float>(result.alpha) / maxChan16F;
+    float avgR = rSum / colorWeightSum;
+    float avgG = gSum / colorWeightSum;
+    float avgB = bSum / colorWeightSum;
+    result.red = static_cast<A_u_short>(
+        CLAMP(avgR * alphaNorm + 0.5f, 0.0f, maxChan16F));
+    result.green = static_cast<A_u_short>(
+        CLAMP(avgG * alphaNorm + 0.5f, 0.0f, maxChan16F));
+    result.blue = static_cast<A_u_short>(
+        CLAMP(avgB * alphaNorm + 0.5f, 0.0f, maxChan16F));
+  }
 
   return result;
 }
