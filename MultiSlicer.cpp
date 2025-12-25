@@ -139,13 +139,13 @@ static float GetRandomValue(A_long seed, A_long index) {
   return result;
 }
 
-// Bilinear interpolation that completely excludes transparent pixels
-// Transparent pixels (alpha=0) do not participate in interpolation at all
+// Hybrid sampling: RGB from nearest opaque pixel, Alpha from bilinear
+// This preserves color while smoothly transitioning transparency at edges
 static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
                                    const SliceContext *ctx) {
   PF_Pixel result = {0, 0, 0, 0};
 
-  // Get integer and fractional parts
+  // Get integer and fractional parts for bilinear
   float fx = srcX - 0.5f;
   float fy = srcY - 0.5f;
   A_long x0 = static_cast<A_long>(floorf(fx));
@@ -154,6 +154,10 @@ static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
   A_long y1 = y0 + 1;
   float fracX = fx - static_cast<float>(x0);
   float fracY = fy - static_cast<float>(y0);
+
+  // Nearest neighbor coordinates for RGB
+  A_long nearX = static_cast<A_long>(srcX + 0.5f);
+  A_long nearY = static_cast<A_long>(srcY + 0.5f);
 
   // Early out if completely outside
   if (x1 < 0 || x0 >= ctx->width || y1 < 0 || y0 >= ctx->height) {
@@ -172,7 +176,7 @@ static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
     return p;
   };
 
-  // Sample 4 neighboring pixels
+  // Sample 4 neighboring pixels for alpha interpolation
   PF_Pixel p00 = readPixel(x0, y0);
   PF_Pixel p10 = readPixel(x1, y0);
   PF_Pixel p01 = readPixel(x0, y1);
@@ -184,76 +188,99 @@ static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
   float w01 = (1.0f - fracX) * fracY;
   float w11 = fracX * fracY;
 
-  // Only include pixels with alpha > 0 in interpolation
-  // Zero out weights for transparent pixels
-  if (p00.alpha == 0)
-    w00 = 0.0f;
-  if (p10.alpha == 0)
-    w10 = 0.0f;
-  if (p01.alpha == 0)
-    w01 = 0.0f;
-  if (p11.alpha == 0)
-    w11 = 0.0f;
+  // Bilinear interpolation for ALPHA only (excluding transparent pixels)
+  float alphaSum = 0.0f;
+  float alphaWeight = 0.0f;
 
-  float totalWeight = w00 + w10 + w01 + w11;
+  if (p00.alpha > 0) {
+    alphaSum += w00 * p00.alpha;
+    alphaWeight += w00;
+  }
+  if (p10.alpha > 0) {
+    alphaSum += w10 * p10.alpha;
+    alphaWeight += w10;
+  }
+  if (p01.alpha > 0) {
+    alphaSum += w01 * p01.alpha;
+    alphaWeight += w01;
+  }
+  if (p11.alpha > 0) {
+    alphaSum += w11 * p11.alpha;
+    alphaWeight += w11;
+  }
 
-  // If all pixels are transparent, return transparent
-  if (totalWeight < 0.0001f) {
+  // If all neighbors are transparent, return transparent
+  if (alphaWeight < 0.0001f) {
     return result;
   }
 
-  // Renormalize weights
-  float invWeight = 1.0f / totalWeight;
-  w00 *= invWeight;
-  w10 *= invWeight;
-  w01 *= invWeight;
-  w11 *= invWeight;
+  // Calculate final alpha - scale by weight coverage for edge fading
+  float finalAlpha = alphaSum; // This naturally fades at edges
+  if (finalAlpha < 0.5f) {
+    return result;
+  }
 
-  // Now interpolate using only opaque pixels (in straight alpha space)
-  float rSum = 0.0f, gSum = 0.0f, bSum = 0.0f, aSum = 0.0f;
+  result.alpha = static_cast<A_u_char>(CLAMP(finalAlpha + 0.5f, 0.0f, 255.0f));
 
-  auto addContribution = [&](const PF_Pixel &p, float weight) {
-    if (weight > 0.0f && p.alpha > 0) {
-      float a = static_cast<float>(p.alpha);
-      float invAlpha = 255.0f / a;
-      // Convert from premultiplied to straight
-      rSum += weight * static_cast<float>(p.red) * invAlpha;
-      gSum += weight * static_cast<float>(p.green) * invAlpha;
-      bSum += weight * static_cast<float>(p.blue) * invAlpha;
-      aSum += weight * a;
+  // For RGB: use nearest neighbor from the closest opaque pixel
+  // This prevents any color modification at transparent boundaries
+  PF_Pixel nearestOpaque = readPixel(nearX, nearY);
+
+  // If nearest pixel is transparent, find the nearest opaque one
+  if (nearestOpaque.alpha == 0) {
+    // Check the 4 bilinear neighbors, pick the one with highest alpha
+    PF_Pixel bestPixel = {0, 0, 0, 0};
+    A_u_char bestAlpha = 0;
+
+    if (p00.alpha > bestAlpha) {
+      bestPixel = p00;
+      bestAlpha = p00.alpha;
     }
-  };
+    if (p10.alpha > bestAlpha) {
+      bestPixel = p10;
+      bestAlpha = p10.alpha;
+    }
+    if (p01.alpha > bestAlpha) {
+      bestPixel = p01;
+      bestAlpha = p01.alpha;
+    }
+    if (p11.alpha > bestAlpha) {
+      bestPixel = p11;
+      bestAlpha = p11.alpha;
+    }
 
-  addContribution(p00, w00);
-  addContribution(p10, w10);
-  addContribution(p01, w01);
-  addContribution(p11, w11);
+    nearestOpaque = bestPixel;
+  }
 
-  // Set alpha (interpolated from opaque pixels only)
-  result.alpha = static_cast<A_u_char>(CLAMP(aSum + 0.5f, 0.0f, 255.0f));
+  // Copy RGB from nearest opaque pixel (convert from premultiplied to straight,
+  // then back)
+  if (nearestOpaque.alpha > 0) {
+    float invAlpha = 255.0f / static_cast<float>(nearestOpaque.alpha);
+    float straightR = static_cast<float>(nearestOpaque.red) * invAlpha;
+    float straightG = static_cast<float>(nearestOpaque.green) * invAlpha;
+    float straightB = static_cast<float>(nearestOpaque.blue) * invAlpha;
 
-  if (result.alpha > 0) {
-    // Convert back to premultiplied
-    float alphaNorm = static_cast<float>(result.alpha) / 255.0f;
-    result.red =
-        static_cast<A_u_char>(CLAMP(rSum * alphaNorm + 0.5f, 0.0f, 255.0f));
-    result.green =
-        static_cast<A_u_char>(CLAMP(gSum * alphaNorm + 0.5f, 0.0f, 255.0f));
-    result.blue =
-        static_cast<A_u_char>(CLAMP(bSum * alphaNorm + 0.5f, 0.0f, 255.0f));
+    // Apply result alpha (premultiply)
+    float resultAlphaNorm = static_cast<float>(result.alpha) / 255.0f;
+    result.red = static_cast<A_u_char>(
+        CLAMP(straightR * resultAlphaNorm + 0.5f, 0.0f, 255.0f));
+    result.green = static_cast<A_u_char>(
+        CLAMP(straightG * resultAlphaNorm + 0.5f, 0.0f, 255.0f));
+    result.blue = static_cast<A_u_char>(
+        CLAMP(straightB * resultAlphaNorm + 0.5f, 0.0f, 255.0f));
   }
 
   return result;
 }
 
-// Bilinear interpolation that completely excludes transparent pixels (16-bit)
-// Transparent pixels (alpha=0) do not participate in interpolation at all
+// Hybrid sampling for 16-bit: RGB from nearest opaque pixel, Alpha from
+// bilinear
 static PF_Pixel16 SampleSourcePixel16(float srcX, float srcY,
                                       const SliceContext *ctx) {
   PF_Pixel16 result = {0, 0, 0, 0};
   const float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
 
-  // Get integer and fractional parts
+  // Get integer and fractional parts for bilinear
   float fx = srcX - 0.5f;
   float fy = srcY - 0.5f;
   A_long x0 = static_cast<A_long>(floorf(fx));
@@ -262,6 +289,10 @@ static PF_Pixel16 SampleSourcePixel16(float srcX, float srcY,
   A_long y1 = y0 + 1;
   float fracX = fx - static_cast<float>(x0);
   float fracY = fy - static_cast<float>(y0);
+
+  // Nearest neighbor coordinates for RGB
+  A_long nearX = static_cast<A_long>(srcX + 0.5f);
+  A_long nearY = static_cast<A_long>(srcY + 0.5f);
 
   // Early out if completely outside
   if (x1 < 0 || x0 >= ctx->width || y1 < 0 || y0 >= ctx->height) {
@@ -280,7 +311,7 @@ static PF_Pixel16 SampleSourcePixel16(float srcX, float srcY,
     return p;
   };
 
-  // Sample 4 neighboring pixels
+  // Sample 4 neighboring pixels for alpha interpolation
   PF_Pixel16 p00 = readPixel(x0, y0);
   PF_Pixel16 p10 = readPixel(x1, y0);
   PF_Pixel16 p01 = readPixel(x0, y1);
@@ -292,61 +323,84 @@ static PF_Pixel16 SampleSourcePixel16(float srcX, float srcY,
   float w01 = (1.0f - fracX) * fracY;
   float w11 = fracX * fracY;
 
-  // Only include pixels with alpha > 0 in interpolation
-  if (p00.alpha == 0)
-    w00 = 0.0f;
-  if (p10.alpha == 0)
-    w10 = 0.0f;
-  if (p01.alpha == 0)
-    w01 = 0.0f;
-  if (p11.alpha == 0)
-    w11 = 0.0f;
+  // Bilinear interpolation for ALPHA only (excluding transparent pixels)
+  float alphaSum = 0.0f;
+  float alphaWeight = 0.0f;
 
-  float totalWeight = w00 + w10 + w01 + w11;
+  if (p00.alpha > 0) {
+    alphaSum += w00 * static_cast<float>(p00.alpha);
+    alphaWeight += w00;
+  }
+  if (p10.alpha > 0) {
+    alphaSum += w10 * static_cast<float>(p10.alpha);
+    alphaWeight += w10;
+  }
+  if (p01.alpha > 0) {
+    alphaSum += w01 * static_cast<float>(p01.alpha);
+    alphaWeight += w01;
+  }
+  if (p11.alpha > 0) {
+    alphaSum += w11 * static_cast<float>(p11.alpha);
+    alphaWeight += w11;
+  }
 
-  // If all pixels are transparent, return transparent
-  if (totalWeight < 0.0001f) {
+  // If all neighbors are transparent, return transparent
+  if (alphaWeight < 0.0001f) {
     return result;
   }
 
-  // Renormalize weights
-  float invWeight = 1.0f / totalWeight;
-  w00 *= invWeight;
-  w10 *= invWeight;
-  w01 *= invWeight;
-  w11 *= invWeight;
+  // Calculate final alpha
+  float finalAlpha = alphaSum;
+  if (finalAlpha < 0.5f) {
+    return result;
+  }
 
-  // Interpolate using only opaque pixels (in straight alpha space)
-  float rSum = 0.0f, gSum = 0.0f, bSum = 0.0f, aSum = 0.0f;
+  result.alpha =
+      static_cast<A_u_short>(CLAMP(finalAlpha + 0.5f, 0.0f, maxChan16F));
 
-  auto addContribution = [&](const PF_Pixel16 &p, float weight) {
-    if (weight > 0.0f && p.alpha > 0) {
-      float a = static_cast<float>(p.alpha);
-      float invAlpha = maxChan16F / a;
-      rSum += weight * static_cast<float>(p.red) * invAlpha;
-      gSum += weight * static_cast<float>(p.green) * invAlpha;
-      bSum += weight * static_cast<float>(p.blue) * invAlpha;
-      aSum += weight * a;
+  // For RGB: use nearest neighbor from the closest opaque pixel
+  PF_Pixel16 nearestOpaque = readPixel(nearX, nearY);
+
+  // If nearest pixel is transparent, find the nearest opaque one
+  if (nearestOpaque.alpha == 0) {
+    PF_Pixel16 bestPixel = {0, 0, 0, 0};
+    A_u_short bestAlpha = 0;
+
+    if (p00.alpha > bestAlpha) {
+      bestPixel = p00;
+      bestAlpha = p00.alpha;
     }
-  };
+    if (p10.alpha > bestAlpha) {
+      bestPixel = p10;
+      bestAlpha = p10.alpha;
+    }
+    if (p01.alpha > bestAlpha) {
+      bestPixel = p01;
+      bestAlpha = p01.alpha;
+    }
+    if (p11.alpha > bestAlpha) {
+      bestPixel = p11;
+      bestAlpha = p11.alpha;
+    }
 
-  addContribution(p00, w00);
-  addContribution(p10, w10);
-  addContribution(p01, w01);
-  addContribution(p11, w11);
+    nearestOpaque = bestPixel;
+  }
 
-  // Set alpha (interpolated from opaque pixels only)
-  result.alpha = static_cast<A_u_short>(CLAMP(aSum + 0.5f, 0.0f, maxChan16F));
+  // Copy RGB from nearest opaque pixel
+  if (nearestOpaque.alpha > 0) {
+    float invAlpha = maxChan16F / static_cast<float>(nearestOpaque.alpha);
+    float straightR = static_cast<float>(nearestOpaque.red) * invAlpha;
+    float straightG = static_cast<float>(nearestOpaque.green) * invAlpha;
+    float straightB = static_cast<float>(nearestOpaque.blue) * invAlpha;
 
-  if (result.alpha > 0) {
-    // Convert back to premultiplied
-    float alphaNorm = static_cast<float>(result.alpha) / maxChan16F;
+    // Apply result alpha (premultiply)
+    float resultAlphaNorm = static_cast<float>(result.alpha) / maxChan16F;
     result.red = static_cast<A_u_short>(
-        CLAMP(rSum * alphaNorm + 0.5f, 0.0f, maxChan16F));
+        CLAMP(straightR * resultAlphaNorm + 0.5f, 0.0f, maxChan16F));
     result.green = static_cast<A_u_short>(
-        CLAMP(gSum * alphaNorm + 0.5f, 0.0f, maxChan16F));
+        CLAMP(straightG * resultAlphaNorm + 0.5f, 0.0f, maxChan16F));
     result.blue = static_cast<A_u_short>(
-        CLAMP(bSum * alphaNorm + 0.5f, 0.0f, maxChan16F));
+        CLAMP(straightB * resultAlphaNorm + 0.5f, 0.0f, maxChan16F));
   }
 
   return result;
