@@ -187,148 +187,6 @@ static inline void ComputeShiftedSourceCoords(const SliceContext *ctx,
   srcY = worldY + ctx->shiftDirY * offsetPixels;
 }
 
-static inline bool ReadSourcePixel8At(const SliceContext *ctx, A_long x,
-                                      A_long y, PF_Pixel &outP) {
-  if (!ctx || x < 0 || y < 0 || x >= ctx->width || y >= ctx->height) {
-    return false;
-  }
-
-  PF_Pixel *p = reinterpret_cast<PF_Pixel *>(
-      reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
-      x * static_cast<A_long>(sizeof(PF_Pixel)));
-  outP = *p;
-  return true;
-}
-
-static inline bool ReadSourcePixel16At(const SliceContext *ctx, A_long x,
-                                       A_long y, PF_Pixel16 &outP) {
-  if (!ctx || x < 0 || y < 0 || x >= ctx->width || y >= ctx->height) {
-    return false;
-  }
-
-  PF_Pixel16 *p = reinterpret_cast<PF_Pixel16 *>(
-      reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
-      x * static_cast<A_long>(sizeof(PF_Pixel16)));
-  outP = *p;
-  return true;
-}
-
-static inline void PremultToStraight8(const PF_Pixel &p, float &r, float &g,
-                                      float &b) {
-  const float a = static_cast<float>(p.alpha);
-  if (a > 0.5f) {
-    const float invA = 255.0f / a;
-    r = static_cast<float>(p.red) * invA;
-    g = static_cast<float>(p.green) * invA;
-    b = static_cast<float>(p.blue) * invA;
-  } else {
-    r = g = b = 0.0f;
-  }
-}
-
-static inline void PremultToStraight16(const PF_Pixel16 &p, float &r, float &g,
-                                       float &b) {
-  const float a = static_cast<float>(p.alpha);
-  const float maxChan = static_cast<float>(PF_MAX_CHAN16);
-  if (a > 0.5f) {
-    const float invA = maxChan / a;
-    r = static_cast<float>(p.red) * invA;
-    g = static_cast<float>(p.green) * invA;
-    b = static_cast<float>(p.blue) * invA;
-  } else {
-    r = g = b = 0.0f;
-  }
-}
-
-// Estimate straight color for fully/near transparent samples by searching
-// nearby opaque pixels. This avoids "black muddy" edges when we later apply a
-// new alpha (slice boundary AA).
-static inline bool EstimateStraightFromNeighbors8(const SliceContext *ctx,
-                                                  A_long cx, A_long cy,
-                                                  float &outR, float &outG,
-                                                  float &outB) {
-  constexpr A_long kRadius = 4;
-  constexpr A_u_char kMinA = 1;
-
-  A_u_char bestAlpha = 0;
-  float bestDist2 = 1e30f;
-  PF_Pixel best = {0, 0, 0, 0};
-  bool found = false;
-
-  for (A_long dy = -kRadius; dy <= kRadius; ++dy) {
-    for (A_long dx = -kRadius; dx <= kRadius; ++dx) {
-      if (dx == 0 && dy == 0)
-        continue;
-      PF_Pixel p;
-      if (!ReadSourcePixel8At(ctx, cx + dx, cy + dy, p))
-        continue;
-      if (p.alpha < kMinA)
-        continue;
-      const float dist2 = static_cast<float>(dx * dx + dy * dy);
-      if (!found || p.alpha > bestAlpha ||
-          (p.alpha == bestAlpha && dist2 < bestDist2)) {
-        bestAlpha = p.alpha;
-        bestDist2 = dist2;
-        best = p;
-        found = true;
-        if (bestAlpha >= 255 && dist2 <= 1.0f)
-          break;
-      }
-    }
-  }
-
-  if (!found) {
-    outR = outG = outB = 0.0f;
-    return false;
-  }
-
-  PremultToStraight8(best, outR, outG, outB);
-  return true;
-}
-
-static inline bool EstimateStraightFromNeighbors16(const SliceContext *ctx,
-                                                   A_long cx, A_long cy,
-                                                   float &outR, float &outG,
-                                                   float &outB) {
-  constexpr A_long kRadius = 4;
-  constexpr A_u_short kMinA = 1;
-
-  A_u_short bestAlpha = 0;
-  float bestDist2 = 1e30f;
-  PF_Pixel16 best = {0, 0, 0, 0};
-  bool found = false;
-
-  for (A_long dy = -kRadius; dy <= kRadius; ++dy) {
-    for (A_long dx = -kRadius; dx <= kRadius; ++dx) {
-      if (dx == 0 && dy == 0)
-        continue;
-      PF_Pixel16 p;
-      if (!ReadSourcePixel16At(ctx, cx + dx, cy + dy, p))
-        continue;
-      if (p.alpha < kMinA)
-        continue;
-      const float dist2 = static_cast<float>(dx * dx + dy * dy);
-      if (!found || p.alpha > bestAlpha ||
-          (p.alpha == bestAlpha && dist2 < bestDist2)) {
-        bestAlpha = p.alpha;
-        bestDist2 = dist2;
-        best = p;
-        found = true;
-        if (bestAlpha >= PF_MAX_CHAN16 && dist2 <= 1.0f)
-          break;
-      }
-    }
-  }
-
-  if (!found) {
-    outR = outG = outB = 0.0f;
-    return false;
-  }
-
-  PremultToStraight16(best, outR, outG, outB);
-  return true;
-}
-
 static void RotatePoint(float centerX, float centerY, float &x, float &y,
                         float angleCos, float angleSin) {
   float dx = x - centerX;
@@ -340,40 +198,6 @@ static void RotatePoint(float centerX, float centerY, float &x, float &y,
 
   x = newX;
   y = newY;
-}
-
-static inline PF_Pixel SampleShiftedPixel8(const SliceContext *ctx,
-                                           const SliceSegment &segment,
-                                           float worldX, float worldY) {
-  float srcX = 0.0f, srcY = 0.0f;
-  ComputeShiftedSourceCoords(ctx, segment, worldX, worldY, srcX, srcY);
-  return SampleSourcePixel8(srcX, srcY, ctx);
-}
-
-static inline PF_Pixel16 SampleShiftedPixel16(const SliceContext *ctx,
-                                              const SliceSegment &segment,
-                                              float worldX, float worldY) {
-  float srcX = 0.0f, srcY = 0.0f;
-  ComputeShiftedSourceCoords(ctx, segment, worldX, worldY, srcX, srcY);
-  return SampleSourcePixel16(srcX, srcY, ctx);
-}
-
-static inline void AddWeightedPixel(const PF_Pixel &sample, float weight,
-                                    float &accumA, float &accumR, float &accumG,
-                                    float &accumB) {
-  accumA += weight * sample.alpha;
-  accumR += weight * sample.red;
-  accumG += weight * sample.green;
-  accumB += weight * sample.blue;
-}
-
-static inline void AddWeightedPixel16(const PF_Pixel16 &sample, float weight,
-                                      float &accumA, float &accumR,
-                                      float &accumG, float &accumB) {
-  accumA += weight * static_cast<float>(sample.alpha);
-  accumR += weight * static_cast<float>(sample.red);
-  accumG += weight * static_cast<float>(sample.green);
-  accumB += weight * static_cast<float>(sample.blue);
 }
 
 // Binary search to find the slice whose [sliceStart, sliceEnd]
@@ -402,33 +226,6 @@ static inline A_long FindSliceIndex(const SliceContext *ctx, float sliceX) {
   return -1;
 }
 
-static inline bool ComputeOverlap(const SliceSegment &segment, float pixelStart,
-                                  float pixelEnd, float &overlapCenter,
-                                  float &coverage) {
-  if (segment.visibleEnd <= segment.visibleStart) {
-    coverage = 0.0f;
-    return false;
-  }
-
-  float overlapStart = MAX(pixelStart, segment.visibleStart);
-  float overlapEnd = MIN(pixelEnd, segment.visibleEnd);
-
-  if (overlapEnd <= overlapStart) {
-    coverage = 0.0f;
-    return false;
-  }
-
-  float overlapWidth = overlapEnd - overlapStart;
-  float pixelSpan = pixelEnd - pixelStart;
-  if (pixelSpan <= 1e-5f) {
-    coverage = 0.0f;
-    return false;
-  }
-  overlapCenter = (overlapStart + overlapEnd) * 0.5f;
-  coverage = MIN(1.0f, MAX(0.0f, overlapWidth / pixelSpan));
-  return true;
-}
-
 static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
                                 PF_Pixel *out) {
   PF_Err err = PF_Err_NONE;
@@ -451,103 +248,18 @@ static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
     return err;
   }
 
-  float halfSpan = ctx->pixelSpan * 0.5f;
-  float pixelStart = sliceX - halfSpan;
-  float pixelEnd = sliceX + halfSpan;
+  const SliceSegment &seg = ctx->segments[idx];
 
-  // Accumulate contributions from slices
-  // Key principle:
-  // - Alpha is blended by coverage (slice boundary AA)
-  // - Color is blended in straight space by coverage, then premultiplied by the
-  // output alpha.
-  // - For fully transparent samples (alpha==0), estimate straight color from
-  // nearby opaque pixels
-  //   so "transparent black" doesn't contaminate the AA edge.
-  float accumAlpha = 0.0f;
-  float accumWeight = 0.0f;
-
-  float straightR = 0.0f, straightG = 0.0f, straightB = 0.0f;
-  float colorWeight = 0.0f;
-
-  auto accumulateSlice = [&](A_long sliceIdx) {
-    if (sliceIdx < 0 || sliceIdx >= ctx->numSlices)
-      return;
-
-    const SliceSegment &seg = ctx->segments[sliceIdx];
-    float overlapCenter = 0.0f;
-    float coverage = 0.0f;
-    if (!ComputeOverlap(seg, pixelStart, pixelEnd, overlapCenter, coverage) ||
-        coverage <= 0.0001f) {
-      return;
-    }
-
-    float axisDelta = overlapCenter - sliceX;
-    float sampleWorldX = worldX + axisDelta * ctx->angleCos;
-    float sampleWorldY = worldY + axisDelta * ctx->angleSin;
-
-    float srcX = 0.0f, srcY = 0.0f;
-    ComputeShiftedSourceCoords(ctx, seg, sampleWorldX, sampleWorldY, srcX,
-                               srcY);
-    PF_Pixel samplePixel = SampleSourcePixel8(srcX, srcY, ctx);
-    float sampleA = static_cast<float>(samplePixel.alpha);
-
-    // Alpha is accumulated with coverage (for slice boundary AA)
-    accumAlpha += coverage * sampleA;
-    accumWeight += coverage;
-
-    // Color (straight)
-    float sR = 0.0f, sG = 0.0f, sB = 0.0f;
-    // In 8bpc premult, very low alpha often quantizes RGB to 0 (losing edge
-    // color). Treat low-alpha samples as "unknown color" and pull color from
-    // nearby higher-alpha pixels.
-    constexpr A_u_char kMinReliableAlpha8 = 4;
-    if (samplePixel.alpha >= kMinReliableAlpha8) {
-      PremultToStraight8(samplePixel, sR, sG, sB);
-    } else {
-      const A_long xi = static_cast<A_long>(srcX + 0.5f);
-      const A_long yi = static_cast<A_long>(srcY + 0.5f);
-      EstimateStraightFromNeighbors8(ctx, xi, yi, sR, sG, sB);
-    }
-
-    straightR += coverage * sR;
-    straightG += coverage * sG;
-    straightB += coverage * sB;
-    colorWeight += coverage;
-  };
-
-  accumulateSlice(idx);
-  if (pixelStart < ctx->segments[idx].visibleStart) {
-    accumulateSlice(idx - 1);
-  }
-  if (pixelEnd > ctx->segments[idx].visibleEnd) {
-    accumulateSlice(idx + 1);
-  }
-
-  if (accumWeight <= 0.0001f) {
+  // Visibility check for width parameter - strictly binary (no anti-aliasing)
+  if (sliceX < seg.visibleStart || sliceX > seg.visibleEnd) {
     out->alpha = out->red = out->green = out->blue = 0;
     return err;
   }
 
-  // Output alpha (slice boundary AA)
-  float finalAlpha = accumAlpha / accumWeight;
-  out->alpha = static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, finalAlpha + 0.5f)));
+  float srcX = 0.0f, srcY = 0.0f;
+  ComputeShiftedSourceCoords(ctx, seg, worldX, worldY, srcX, srcY);
 
-  // Output color (premultiplied from straight)
-  if (colorWeight > 0.0001f && out->alpha > 0) {
-    float avgR = straightR / colorWeight;
-    float avgG = straightG / colorWeight;
-    float avgB = straightB / colorWeight;
-
-    float alphaNorm = out->alpha / 255.0f;
-    out->red =
-        static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgR * alphaNorm + 0.5f)));
-    out->green =
-        static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgG * alphaNorm + 0.5f)));
-    out->blue =
-        static_cast<A_u_char>(MIN(255.0f, MAX(0.0f, avgB * alphaNorm + 0.5f)));
-  } else {
-    out->red = out->green = out->blue = 0;
-  }
+  *out = SampleSourcePixel8(srcX, srcY, ctx);
 
   return err;
 }
@@ -575,81 +287,18 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
     return err;
   }
 
-  float halfSpan = ctx->pixelSpan * 0.5f;
-  float pixelStart = sliceX - halfSpan;
-  float pixelEnd = sliceX + halfSpan;
-  float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
+  const SliceSegment &seg = ctx->segments[idx];
 
-  float accumAlpha = 0.0f, accumWeight = 0.0f;
-  float straightR = 0.0f, straightG = 0.0f, straightB = 0.0f,
-        colorWeight = 0.0f;
-
-  auto accumulateSlice16 = [&](A_long sliceIdx) {
-    if (sliceIdx < 0 || sliceIdx >= ctx->numSlices)
-      return;
-    const SliceSegment &seg = ctx->segments[sliceIdx];
-    float overlapCenter = 0.0f, coverage = 0.0f;
-    if (!ComputeOverlap(seg, pixelStart, pixelEnd, overlapCenter, coverage) ||
-        coverage <= 0.0001f)
-      return;
-
-    float axisDelta = overlapCenter - sliceX;
-    float sampleWorldX = worldX + axisDelta * ctx->angleCos;
-    float sampleWorldY = worldY + axisDelta * ctx->angleSin;
-    float srcX = 0.0f, srcY = 0.0f;
-    ComputeShiftedSourceCoords(ctx, seg, sampleWorldX, sampleWorldY, srcX,
-                               srcY);
-    PF_Pixel16 sp = SampleSourcePixel16(srcX, srcY, ctx);
-    float sA = static_cast<float>(sp.alpha);
-    accumAlpha += coverage * sA;
-    accumWeight += coverage;
-
-    float sR = 0.0f, sG = 0.0f, sB = 0.0f;
-    // Same idea as 8bpc: if alpha is extremely low, premult RGB may be
-    // effectively 0.
-    constexpr A_u_short kMinReliableAlpha16 = 256;
-    if (sp.alpha >= kMinReliableAlpha16) {
-      PremultToStraight16(sp, sR, sG, sB);
-    } else {
-      const A_long xi = static_cast<A_long>(srcX + 0.5f);
-      const A_long yi = static_cast<A_long>(srcY + 0.5f);
-      EstimateStraightFromNeighbors16(ctx, xi, yi, sR, sG, sB);
-    }
-    straightR += coverage * sR;
-    straightG += coverage * sG;
-    straightB += coverage * sB;
-    colorWeight += coverage;
-  };
-
-  accumulateSlice16(idx);
-  if (pixelStart < ctx->segments[idx].visibleStart)
-    accumulateSlice16(idx - 1);
-  if (pixelEnd > ctx->segments[idx].visibleEnd)
-    accumulateSlice16(idx + 1);
-
-  if (accumWeight <= 0.0001f) {
+  // Visibility check for width parameter - strictly binary (no anti-aliasing)
+  if (sliceX < seg.visibleStart || sliceX > seg.visibleEnd) {
     out->alpha = out->red = out->green = out->blue = 0;
     return err;
   }
 
-  float finalAlpha = accumAlpha / accumWeight;
-  out->alpha =
-      static_cast<A_u_short>(MIN(maxChan16F, MAX(0.0f, finalAlpha + 0.5f)));
+  float srcX = 0.0f, srcY = 0.0f;
+  ComputeShiftedSourceCoords(ctx, seg, worldX, worldY, srcX, srcY);
 
-  if (colorWeight > 0.0001f && out->alpha > 0) {
-    float avgR = straightR / colorWeight;
-    float avgG = straightG / colorWeight;
-    float avgB = straightB / colorWeight;
-    float alphaNorm = static_cast<float>(out->alpha) / maxChan16F;
-    out->red = static_cast<A_u_short>(
-        MIN(maxChan16F, MAX(0.0f, avgR * alphaNorm + 0.5f)));
-    out->green = static_cast<A_u_short>(
-        MIN(maxChan16F, MAX(0.0f, avgG * alphaNorm + 0.5f)));
-    out->blue = static_cast<A_u_short>(
-        MIN(maxChan16F, MAX(0.0f, avgB * alphaNorm + 0.5f)));
-  } else {
-    out->red = out->green = out->blue = 0;
-  }
+  *out = SampleSourcePixel16(srcX, srcY, ctx);
 
   return err;
 }
