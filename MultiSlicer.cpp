@@ -139,128 +139,42 @@ static float GetRandomValue(A_long seed, A_long index) {
   return result;
 }
 
-// Correct premultiplied-alpha bilinear interpolation
-// Just do weighted average - transparent pixels (0,0,0,0) contribute nothing
-// naturally
+// Simple nearest neighbor sampling - no antialiasing
 static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
                                    const SliceContext *ctx) {
   PF_Pixel result = {0, 0, 0, 0};
 
-  // Get integer and fractional parts
-  float fx = srcX - 0.5f;
-  float fy = srcY - 0.5f;
-  A_long x0 = static_cast<A_long>(floorf(fx));
-  A_long y0 = static_cast<A_long>(floorf(fy));
-  A_long x1 = x0 + 1;
-  A_long y1 = y0 + 1;
-  float fracX = fx - static_cast<float>(x0);
-  float fracY = fy - static_cast<float>(y0);
+  A_long x = static_cast<A_long>(srcX + 0.5f);
+  A_long y = static_cast<A_long>(srcY + 0.5f);
 
-  // Early out if completely outside
-  if (x1 < 0 || x0 >= ctx->width || y1 < 0 || y0 >= ctx->height) {
+  if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
     return result;
   }
 
-  // Helper to read pixel safely (returns 0,0,0,0 for out of bounds)
-  auto readPixel = [ctx](A_long x, A_long y) -> PF_Pixel {
-    PF_Pixel p = {0, 0, 0, 0};
-    if (x >= 0 && x < ctx->width && y >= 0 && y < ctx->height) {
-      PF_Pixel *ptr = reinterpret_cast<PF_Pixel *>(
-          reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
-          x * static_cast<A_long>(sizeof(PF_Pixel)));
-      p = *ptr;
-    }
-    return p;
-  };
+  PF_Pixel *p = reinterpret_cast<PF_Pixel *>(
+      reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
+      x * static_cast<A_long>(sizeof(PF_Pixel)));
 
-  // Sample 4 neighboring pixels
-  PF_Pixel p00 = readPixel(x0, y0);
-  PF_Pixel p10 = readPixel(x1, y0);
-  PF_Pixel p01 = readPixel(x0, y1);
-  PF_Pixel p11 = readPixel(x1, y1);
-
-  // Bilinear weights
-  float w00 = (1.0f - fracX) * (1.0f - fracY);
-  float w10 = fracX * (1.0f - fracY);
-  float w01 = (1.0f - fracX) * fracY;
-  float w11 = fracX * fracY;
-
-  // Simple premultiplied bilinear interpolation
-  // Transparent pixels (0,0,0,0) naturally contribute nothing
-  float a =
-      w00 * p00.alpha + w10 * p10.alpha + w01 * p01.alpha + w11 * p11.alpha;
-  float r = w00 * p00.red + w10 * p10.red + w01 * p01.red + w11 * p11.red;
-  float g =
-      w00 * p00.green + w10 * p10.green + w01 * p01.green + w11 * p11.green;
-  float b = w00 * p00.blue + w10 * p10.blue + w01 * p01.blue + w11 * p11.blue;
-
-  result.alpha = static_cast<A_u_char>(CLAMP(a + 0.5f, 0.0f, 255.0f));
-  result.red = static_cast<A_u_char>(CLAMP(r + 0.5f, 0.0f, 255.0f));
-  result.green = static_cast<A_u_char>(CLAMP(g + 0.5f, 0.0f, 255.0f));
-  result.blue = static_cast<A_u_char>(CLAMP(b + 0.5f, 0.0f, 255.0f));
-
-  return result;
+  return *p;
 }
 
-// Correct premultiplied-alpha bilinear interpolation (16-bit)
+// Simple direct pixel access - no antialiasing (16-bit)
 static PF_Pixel16 SampleSourcePixel16(float srcX, float srcY,
                                       const SliceContext *ctx) {
   PF_Pixel16 result = {0, 0, 0, 0};
-  const float maxChan16F = static_cast<float>(PF_MAX_CHAN16);
 
-  // Get integer and fractional parts
-  float fx = srcX - 0.5f;
-  float fy = srcY - 0.5f;
-  A_long x0 = static_cast<A_long>(floorf(fx));
-  A_long y0 = static_cast<A_long>(floorf(fy));
-  A_long x1 = x0 + 1;
-  A_long y1 = y0 + 1;
-  float fracX = fx - static_cast<float>(x0);
-  float fracY = fy - static_cast<float>(y0);
+  A_long x = static_cast<A_long>(srcX + 0.5f);
+  A_long y = static_cast<A_long>(srcY + 0.5f);
 
-  // Early out if completely outside
-  if (x1 < 0 || x0 >= ctx->width || y1 < 0 || y0 >= ctx->height) {
+  if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
     return result;
   }
 
-  // Helper to read pixel safely
-  auto readPixel = [ctx](A_long x, A_long y) -> PF_Pixel16 {
-    PF_Pixel16 p = {0, 0, 0, 0};
-    if (x >= 0 && x < ctx->width && y >= 0 && y < ctx->height) {
-      PF_Pixel16 *ptr = reinterpret_cast<PF_Pixel16 *>(
-          reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
-          x * static_cast<A_long>(sizeof(PF_Pixel16)));
-      p = *ptr;
-    }
-    return p;
-  };
+  PF_Pixel16 *p = reinterpret_cast<PF_Pixel16 *>(
+      reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
+      x * static_cast<A_long>(sizeof(PF_Pixel16)));
 
-  // Sample 4 neighboring pixels
-  PF_Pixel16 p00 = readPixel(x0, y0);
-  PF_Pixel16 p10 = readPixel(x1, y0);
-  PF_Pixel16 p01 = readPixel(x0, y1);
-  PF_Pixel16 p11 = readPixel(x1, y1);
-
-  // Bilinear weights
-  float w00 = (1.0f - fracX) * (1.0f - fracY);
-  float w10 = fracX * (1.0f - fracY);
-  float w01 = (1.0f - fracX) * fracY;
-  float w11 = fracX * fracY;
-
-  // Simple premultiplied bilinear interpolation
-  float a =
-      w00 * p00.alpha + w10 * p10.alpha + w01 * p01.alpha + w11 * p11.alpha;
-  float r = w00 * p00.red + w10 * p10.red + w01 * p01.red + w11 * p11.red;
-  float g =
-      w00 * p00.green + w10 * p10.green + w01 * p01.green + w11 * p11.green;
-  float b = w00 * p00.blue + w10 * p10.blue + w01 * p01.blue + w11 * p11.blue;
-
-  result.alpha = static_cast<A_u_short>(CLAMP(a + 0.5f, 0.0f, maxChan16F));
-  result.red = static_cast<A_u_short>(CLAMP(r + 0.5f, 0.0f, maxChan16F));
-  result.green = static_cast<A_u_short>(CLAMP(g + 0.5f, 0.0f, maxChan16F));
-  result.blue = static_cast<A_u_short>(CLAMP(b + 0.5f, 0.0f, maxChan16F));
-
-  return result;
+  return *p;
 }
 
 static inline void ComputeShiftedSourceCoords(const SliceContext *ctx,
