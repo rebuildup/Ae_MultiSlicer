@@ -142,157 +142,47 @@ static float GetRandomValue(A_long seed, A_long index) {
 // Simple nearest neighbor sampling - no antialiasing
 // Bilinear interpolation for 8-bit (Standard Premultiplied Alpha)
 // Bilinear interpolation ensuring no black fringe (8-bit)
+// Nearest Neighbor sampling to strictly preserve source colors (8-bit)
+// No bilinear interpolation to avoid any color bleeding or dark halos.
 static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
                                    const SliceContext *ctx) {
   PF_Pixel result = {0, 0, 0, 0};
 
-  // 1. Calculate coordinates and weights
-  float fx = srcX - 0.5f;
-  float fy = srcY - 0.5f;
-  A_long x0 = static_cast<A_long>(floorf(fx));
-  A_long y0 = static_cast<A_long>(floorf(fy));
-  A_long x1 = x0 + 1;
-  A_long y1 = y0 + 1;
-  float dx = fx - static_cast<float>(x0);
-  float dy = fy - static_cast<float>(y0);
+  // Round to nearest integer
+  A_long x = static_cast<A_long>(srcX + 0.5f);
+  A_long y = static_cast<A_long>(srcY + 0.5f);
 
-  // Helper to safely read pixel (0 if out of bounds)
-  auto getPix = [&](A_long x, A_long y) -> PF_Pixel {
-    if (x < 0 || y < 0 || x >= ctx->width || y >= ctx->height)
-      return {0, 0, 0, 0};
-    return *(reinterpret_cast<PF_Pixel *>(
-        reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
-        x * static_cast<A_long>(sizeof(PF_Pixel))));
-  };
-
-  PF_Pixel p00 = getPix(x0, y0);
-  PF_Pixel p10 = getPix(x1, y0);
-  PF_Pixel p01 = getPix(x0, y1);
-  PF_Pixel p11 = getPix(x1, y1);
-
-  // 3. Compute bilinear weights
-  float w00 = (1.0f - dx) * (1.0f - dy);
-  float w10 = dx * (1.0f - dy);
-  float w01 = (1.0f - dx) * dy;
-  float w11 = dx * dy;
-
-  // 4. Calculate Alpha (Standard bilinear)
-  float aSum =
-      w00 * p00.alpha + w10 * p10.alpha + w01 * p01.alpha + w11 * p11.alpha;
-
-  // 5. Calculate RGB using ONLY pixels that have alpha > 0
-  float rSum = 0.0f, gSum = 0.0f, bSum = 0.0f;
-  float weightSum = 0.0f;
-
-  auto addColor = [&](const PF_Pixel &p, float w) {
-    if (p.alpha > 0) {
-      float invA = 255.0f / static_cast<float>(p.alpha);
-      rSum += static_cast<float>(p.red) * invA * w;
-      gSum += static_cast<float>(p.green) * invA * w;
-      bSum += static_cast<float>(p.blue) * invA * w;
-      weightSum += w;
-    }
-  };
-
-  addColor(p00, w00);
-  addColor(p10, w10);
-  addColor(p01, w01);
-  addColor(p11, w11);
-
-  result.alpha = static_cast<A_u_char>(CLAMP(aSum + 0.5f, 0.0f, 255.0f));
-
-  if (weightSum > 0.0001f && result.alpha > 0) {
-    // Normalize straight RGB
-    float r = rSum / weightSum;
-    float g = gSum / weightSum;
-    float b = bSum / weightSum;
-
-    // Re-premultiply
-    float normA = static_cast<float>(result.alpha) / 255.0f;
-    result.red = static_cast<A_u_char>(CLAMP(r * normA + 0.5f, 0.0f, 255.0f));
-    result.green = static_cast<A_u_char>(CLAMP(g * normA + 0.5f, 0.0f, 255.0f));
-    result.blue = static_cast<A_u_char>(CLAMP(b * normA + 0.5f, 0.0f, 255.0f));
-  } else {
-    result.red = result.green = result.blue = 0;
+  if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
+    return result;
   }
 
-  return result;
+  PF_Pixel *p = reinterpret_cast<PF_Pixel *>(
+      reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
+      x * static_cast<A_long>(sizeof(PF_Pixel)));
+
+  return *p;
 }
 
 // Bilinear interpolation for 16-bit
 // Bilinear interpolation ensuring no black fringe (16-bit)
+// Nearest Neighbor sampling to strictly preserve source colors (16-bit)
 static PF_Pixel16 SampleSourcePixel16(float srcX, float srcY,
                                       const SliceContext *ctx) {
   PF_Pixel16 result = {0, 0, 0, 0};
-  const float maxC = static_cast<float>(PF_MAX_CHAN16);
 
-  float fx = srcX - 0.5f;
-  float fy = srcY - 0.5f;
-  A_long x0 = static_cast<A_long>(floorf(fx));
-  A_long y0 = static_cast<A_long>(floorf(fy));
-  A_long x1 = x0 + 1;
-  A_long y1 = y0 + 1;
-  float dx = fx - static_cast<float>(x0);
-  float dy = fy - static_cast<float>(y0);
+  // Round to nearest integer
+  A_long x = static_cast<A_long>(srcX + 0.5f);
+  A_long y = static_cast<A_long>(srcY + 0.5f);
 
-  // Helper to safely read pixel (0 if out of bounds)
-  auto getPix = [&](A_long x, A_long y) -> PF_Pixel16 {
-    if (x < 0 || y < 0 || x >= ctx->width || y >= ctx->height)
-      return {0, 0, 0, 0};
-    return *(reinterpret_cast<PF_Pixel16 *>(
-        reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
-        x * static_cast<A_long>(sizeof(PF_Pixel16))));
-  };
-
-  PF_Pixel16 p00 = getPix(x0, y0);
-  PF_Pixel16 p10 = getPix(x1, y0);
-  PF_Pixel16 p01 = getPix(x0, y1);
-  PF_Pixel16 p11 = getPix(x1, y1);
-
-  float w00 = (1.0f - dx) * (1.0f - dy);
-  float w10 = dx * (1.0f - dy);
-  float w01 = (1.0f - dx) * dy;
-  float w11 = dx * dy;
-
-  // Alpha (Standard bilinear)
-  float aSum =
-      w00 * p00.alpha + w10 * p10.alpha + w01 * p01.alpha + w11 * p11.alpha;
-
-  // RGB (Strictly from non-transparent pixels)
-  float rSum = 0.0f, gSum = 0.0f, bSum = 0.0f;
-  float weightSum = 0.0f;
-
-  auto addColor = [&](const PF_Pixel16 &p, float w) {
-    if (p.alpha > 0) {
-      float invA = maxC / static_cast<float>(p.alpha);
-      rSum += static_cast<float>(p.red) * invA * w;
-      gSum += static_cast<float>(p.green) * invA * w;
-      bSum += static_cast<float>(p.blue) * invA * w;
-      weightSum += w;
-    }
-  };
-
-  addColor(p00, w00);
-  addColor(p10, w10);
-  addColor(p01, w01);
-  addColor(p11, w11);
-
-  result.alpha = static_cast<A_u_short>(CLAMP(aSum + 0.5f, 0.0f, maxC));
-
-  if (weightSum > 0.0001f && result.alpha > 0) {
-    float r = rSum / weightSum;
-    float g = gSum / weightSum;
-    float b = bSum / weightSum;
-    float normA = static_cast<float>(result.alpha) / maxC;
-
-    result.red = static_cast<A_u_short>(CLAMP(r * normA + 0.5f, 0.0f, maxC));
-    result.green = static_cast<A_u_short>(CLAMP(g * normA + 0.5f, 0.0f, maxC));
-    result.blue = static_cast<A_u_short>(CLAMP(b * normA + 0.5f, 0.0f, maxC));
-  } else {
-    result.red = result.green = result.blue = 0;
+  if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
+    return result;
   }
 
-  return result;
+  PF_Pixel16 *p = reinterpret_cast<PF_Pixel16 *>(
+      reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
+      x * static_cast<A_long>(sizeof(PF_Pixel16)));
+
+  return *p;
 }
 
 static inline void ComputeShiftedSourceCoords(const SliceContext *ctx,
