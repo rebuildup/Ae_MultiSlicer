@@ -553,9 +553,15 @@ static PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data,
   float resolution_scale = MIN(downscale_x, downscale_y);
   float shiftAmount = fabsf(shiftRaw) * resolution_scale;
 
-  // Use input_world dimensions for rendering calculations
-  A_long imageWidth = input_world->width;
-  A_long imageHeight = input_world->height;
+  // IMPORTANT: Separate layer dimensions from buffer dimensions
+  // Layer dimensions (from in_data) - used for slice position calculations
+  // These are constant and independent of the SmartFX buffer expansion
+  A_long layerWidth = in_data->width;
+  A_long layerHeight = in_data->height;
+
+  // Buffer dimensions (from input_world) - used only for pixel access bounds
+  A_long bufferWidth = input_world->width;
+  A_long bufferHeight = input_world->height;
 
   // Declare all variables before any goto statements (MSVC requirement)
   float centerX = 0.0f;
@@ -583,8 +589,10 @@ static PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data,
   angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
   angleCos = cosf(angleRad);
   angleSin = sinf(angleRad);
-  sliceLength = 2.0f * sqrtf(static_cast<float>(imageWidth * imageWidth +
-                                                imageHeight * imageHeight));
+  // Use LAYER dimensions for sliceLength - this must NOT change with buffer
+  // expansion
+  sliceLength = 2.0f * sqrtf(static_cast<float>(layerWidth * layerWidth +
+                                                layerHeight * layerHeight));
 
   // Allocate segments
   {
@@ -675,8 +683,8 @@ static PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data,
     SliceContext context;
     context.srcData = input_world->data;
     context.rowbytes = input_world->rowbytes;
-    context.width = imageWidth;
-    context.height = imageHeight;
+    context.width = bufferWidth; // Buffer dimensions for pixel access bounds
+    context.height = bufferHeight;
     context.centerX = centerX;
     context.centerY = centerY;
     context.angleCos = angleCos;
