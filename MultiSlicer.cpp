@@ -257,9 +257,10 @@ static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
   }
 
   // Accumulate contributions:
-  // For Alpha: Additive blending (sum of coverages) to ensure gapless joining.
-  // For RGB: Strictly preserve the source color of the most dominant slice.
-  // This avoids any "dark halo" caused by multiplying RGB by coverage.
+  // For Alpha: Additive blending (sum of coverages).
+  // For RGB: Select the color of the slice with the highest coverage.
+  // CRITICAL FIX: Ignore transparent (alpha=0) pixels when selecting RGB,
+  // to prevent picking "black" from outside the slice boundary.
   float accumA = 0.0f;
   PF_Pixel bestPixel = {0, 0, 0, 0};
   float maxCoverage = -1.0f;
@@ -293,10 +294,22 @@ static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
     // Accumulate Alpha
     accumA += static_cast<float>(p.alpha) * coverage;
 
-    // Keep the RGB of the slice that covers this pixel the most
-    if (coverage > maxCoverage) {
+    // Logic to select best RGB:
+    // Prioritize opaque pixels over transparent ones.
+    // If both opaque (or both transparent), pick highest coverage.
+    bool currentIsOpaque = (p.alpha > 0);
+    bool bestIsOpaque = (bestPixel.alpha > 0);
+
+    if (currentIsOpaque && !bestIsOpaque) {
+      // Found an opaque pixel, take it immediately
       maxCoverage = coverage;
-      bestPixel = p; // Copy raw RGB
+      bestPixel = p;
+    } else if (currentIsOpaque == bestIsOpaque) {
+      // Both opaque or both transparent -> use coverage
+      if (coverage > maxCoverage) {
+        maxCoverage = coverage;
+        bestPixel = p;
+      }
     }
   };
 
@@ -370,10 +383,19 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
     // Accumulate Alpha
     accumA += static_cast<float>(p.alpha) * coverage;
 
-    // Keep the RGB of the slice that covers this pixel the most
-    if (coverage > maxCoverage) {
+    // Logic to select best RGB:
+    // Prioritize opaque pixels over transparent ones.
+    bool currentIsOpaque = (p.alpha > 0);
+    bool bestIsOpaque = (bestPixel.alpha > 0);
+
+    if (currentIsOpaque && !bestIsOpaque) {
       maxCoverage = coverage;
-      bestPixel = p; // Copy raw RGB
+      bestPixel = p;
+    } else if (currentIsOpaque == bestIsOpaque) {
+      if (coverage > maxCoverage) {
+        maxCoverage = coverage;
+        bestPixel = p;
+      }
     }
   };
 
