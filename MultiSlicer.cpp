@@ -71,13 +71,15 @@ static PF_Err GlobalSetup(PF_InData *in_data, PF_OutData *out_data,
   out_data->my_version = PF_VERSION(MAJOR_VERSION, MINOR_VERSION, BUG_VERSION,
                                     STAGE_VERSION, BUILD_VERSION);
 
-  // Support 16-bit, multiprocessing, and Multi-Frame Rendering
-  out_data->out_flags = PF_OutFlag_DEEP_COLOR_AWARE;
-  out_data->out_flags |= PF_OutFlag_PIX_INDEPENDENT;
-  out_data->out_flags |= PF_OutFlag_SEND_UPDATE_PARAMS_UI;
+  // Support 16-bit and pixel-independent rendering
+  out_data->out_flags = PF_OutFlag_DEEP_COLOR_AWARE |
+                        PF_OutFlag_PIX_INDEPENDENT |
+                        PF_OutFlag_SEND_UPDATE_PARAMS_UI;
 
-  // Enable Multi-Frame Rendering support
-  out_data->out_flags2 = PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
+  // SmartFX for out-of-bounds rendering + Multi-Frame Rendering
+  out_data->out_flags2 = PF_OutFlag2_SUPPORTS_SMART_RENDER |
+                         PF_OutFlag2_SUPPORTS_THREADED_RENDERING |
+                         PF_OutFlag2_REVEALS_ZERO_ALPHA;
 
   return PF_Err_NONE;
 }
@@ -411,6 +413,304 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
   return err;
 }
 
+// ============================================================================
+// SmartFX Implementation for out-of-bounds rendering
+// ============================================================================
+
+static PF_Err PreRender(PF_InData *in_data, PF_OutData *out_data,
+                        PF_PreRenderExtra *extra) {
+  PF_Err err = PF_Err_NONE;
+  PF_CheckoutResult in_result;
+  PF_ParamDef shift_param;
+  AEFX_CLR_STRUCT(shift_param);
+
+  // Checkout shift parameter to calculate required expansion
+  ERR(PF_CHECKOUT_PARAM(in_data, MULTISLICER_SHIFT, in_data->current_time,
+                        in_data->time_step, in_data->time_scale, &shift_param));
+
+  if (err)
+    return err;
+
+  float shiftRaw = shift_param.u.fs_d.value;
+
+  // Calculate maximum possible expansion based on shift
+  // The shift can move pixels by shiftAmount in the slice direction
+  // We use a conservative multiplier to ensure we request enough input
+  A_long expansion = (A_long)(fabsf(shiftRaw) * 2.0f) + 10;
+
+  // Get the render request from After Effects
+  PF_RenderRequest req = extra->input->output_request;
+
+  // Create an expanded input request to get source pixels for shifted content
+  PF_RenderRequest input_req = req;
+  input_req.rect.left -= expansion;
+  input_req.rect.top -= expansion;
+  input_req.rect.right += expansion;
+  input_req.rect.bottom += expansion;
+  input_req.preserve_rgb_of_zero_alpha = TRUE;
+
+  // Checkout the input layer with the expanded request
+  // checkout_idL must be unique and positive (we use MULTISLICER_INPUT)
+  ERR(extra->cb->checkout_layer(in_data->effect_ref,
+                                MULTISLICER_INPUT, // index
+                                MULTISLICER_INPUT, // checkout_id
+                                &input_req, in_data->current_time,
+                                in_data->time_step, in_data->time_scale,
+                                &in_result));
+
+  if (!err) {
+    // max_result_rect: The MAXIMUM possible output bounds (cannot depend on
+    // render request) This is the layer size expanded by the maximum shift
+    // amount
+    PF_LRect max_rect;
+    max_rect.left = -expansion;
+    max_rect.top = -expansion;
+    max_rect.right = in_data->width + expansion;
+    max_rect.bottom = in_data->height + expansion;
+    extra->output->max_result_rect = max_rect;
+
+    // result_rect: What we're actually rendering for THIS request
+    // This must not exceed the request rect (unless
+    // PF_RenderOutputFlag_RETURNS_EXTRA_PIXELS is set) We intersect with
+    // max_result_rect
+    PF_LRect result = req.rect;
+    if (result.left < max_rect.left)
+      result.left = max_rect.left;
+    if (result.top < max_rect.top)
+      result.top = max_rect.top;
+    if (result.right > max_rect.right)
+      result.right = max_rect.right;
+    if (result.bottom > max_rect.bottom)
+      result.bottom = max_rect.bottom;
+    extra->output->result_rect = result;
+
+    // Indicate that the output may be solid if input is solid
+    extra->output->solid = FALSE;
+  }
+
+  ERR(PF_CHECKIN_PARAM(in_data, &shift_param));
+
+  return err;
+}
+
+static PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data,
+                          PF_SmartRenderExtra *extra) {
+  PF_Err err = PF_Err_NONE;
+  AEGP_SuiteHandler suites(in_data->pica_basicP);
+
+  PF_EffectWorld *input_world = NULL;
+  PF_EffectWorld *output_world = NULL;
+
+  // Checkout the layer pixels using the same checkout_id from PreRender
+  ERR(extra->cb->checkout_layer_pixels(in_data->effect_ref, MULTISLICER_INPUT,
+                                       &input_world));
+  ERR(extra->cb->checkout_output(in_data->effect_ref, &output_world));
+
+  if (err || !input_world || !output_world)
+    return err ? err : PF_Err_BAD_CALLBACK_PARAM;
+
+  // Checkout parameters (non-layer params can be checked out during
+  // SmartRender)
+  PF_ParamDef shift_param, width_param, slices_param, anchor_param, angle_param,
+      seed_param;
+  AEFX_CLR_STRUCT(shift_param);
+  AEFX_CLR_STRUCT(width_param);
+  AEFX_CLR_STRUCT(slices_param);
+  AEFX_CLR_STRUCT(anchor_param);
+  AEFX_CLR_STRUCT(angle_param);
+  AEFX_CLR_STRUCT(seed_param);
+
+  ERR(PF_CHECKOUT_PARAM(in_data, MULTISLICER_SHIFT, in_data->current_time,
+                        in_data->time_step, in_data->time_scale, &shift_param));
+  ERR(PF_CHECKOUT_PARAM(in_data, MULTISLICER_WIDTH, in_data->current_time,
+                        in_data->time_step, in_data->time_scale, &width_param));
+  ERR(PF_CHECKOUT_PARAM(in_data, MULTISLICER_SLICES, in_data->current_time,
+                        in_data->time_step, in_data->time_scale,
+                        &slices_param));
+  ERR(PF_CHECKOUT_PARAM(in_data, MULTISLICER_ANCHOR_POINT,
+                        in_data->current_time, in_data->time_step,
+                        in_data->time_scale, &anchor_param));
+  ERR(PF_CHECKOUT_PARAM(in_data, MULTISLICER_ANGLE, in_data->current_time,
+                        in_data->time_step, in_data->time_scale, &angle_param));
+  ERR(PF_CHECKOUT_PARAM(in_data, MULTISLICER_SEED, in_data->current_time,
+                        in_data->time_step, in_data->time_scale, &seed_param));
+
+  if (err)
+    return err;
+
+  float shiftRaw = shift_param.u.fs_d.value;
+  float width = width_param.u.fs_d.value / 100.0f;
+  A_long numSlices = slices_param.u.sd.value;
+  PF_Fixed anchor_x = anchor_param.u.td.x_value;
+  PF_Fixed anchor_y = anchor_param.u.td.y_value;
+  A_long angle_long = angle_param.u.ad.value >> 16;
+  A_long seed = seed_param.u.sd.value;
+
+  numSlices = MAX(1, numSlices);
+  float shiftDirection = (shiftRaw >= 0) ? 1.0f : -1.0f;
+
+  float downscale_x = GetDownscaleFactor(in_data->downsample_x);
+  float downscale_y = GetDownscaleFactor(in_data->downsample_y);
+  float resolution_scale = MIN(downscale_x, downscale_y);
+  float shiftAmount = fabsf(shiftRaw) * resolution_scale;
+
+  // Use input_world dimensions for rendering calculations
+  A_long imageWidth = input_world->width;
+  A_long imageHeight = input_world->height;
+
+  // Check for no-op case: copy input to output
+  if ((shiftAmount < 0.001f && fabsf(width - 0.9999f) < 0.0001f) ||
+      numSlices <= 1) {
+    ERR(suites.WorldTransformSuite1()->copy_hq(in_data->effect_ref, input_world,
+                                               output_world, NULL, NULL));
+    goto cleanup;
+  }
+
+  // Calculate center using logical layer dimensions (in_data->width/height)
+  // but scaled for the actual buffer
+  float centerX = static_cast<float>(anchor_x) / 65536.0f;
+  float centerY = static_cast<float>(anchor_y) / 65536.0f;
+
+  // Adjust center for the input buffer coordinate system using origin
+  centerX = centerX - (float)input_world->origin_x;
+  centerY = centerY - (float)input_world->origin_y;
+
+  float angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
+  float angleCos = cosf(angleRad);
+  float angleSin = sinf(angleRad);
+  float sliceLength =
+      2.0f * sqrtf(static_cast<float>(imageWidth * imageWidth +
+                                      imageHeight * imageHeight));
+
+  // Allocate segments
+  {
+    PF_Handle segmentsHandle = suites.HandleSuite1()->host_new_handle(
+        numSlices * sizeof(SliceSegment));
+    if (!segmentsHandle) {
+      err = PF_Err_OUT_OF_MEMORY;
+      goto cleanup;
+    }
+    SliceSegment *segments = *((SliceSegment **)segmentsHandle);
+    if (!segments) {
+      suites.HandleSuite1()->host_dispose_handle(segmentsHandle);
+      err = PF_Err_OUT_OF_MEMORY;
+      goto cleanup;
+    }
+
+    PF_Handle divPointsHandle =
+        suites.HandleSuite1()->host_new_handle((numSlices + 1) * sizeof(float));
+    if (!divPointsHandle) {
+      suites.HandleSuite1()->host_dispose_handle(segmentsHandle);
+      err = PF_Err_OUT_OF_MEMORY;
+      goto cleanup;
+    }
+    float *divPoints = *((float **)divPointsHandle);
+    if (!divPoints) {
+      suites.HandleSuite1()->host_dispose_handle(divPointsHandle);
+      suites.HandleSuite1()->host_dispose_handle(segmentsHandle);
+      err = PF_Err_OUT_OF_MEMORY;
+      goto cleanup;
+    }
+
+    // Calculate division points (same logic as Render)
+    divPoints[0] = -sliceLength / 2.0f;
+    divPoints[numSlices] = sliceLength / 2.0f;
+    float baselineOffset =
+        (GetRandomValue(seed, 12345) - 0.5f) * sliceLength * 0.1f;
+    float avgSpacing = sliceLength / numSlices;
+
+    if (numSlices > 1) {
+      for (A_long i = 1; i < numSlices; i++) {
+        divPoints[i] = divPoints[0] + (i * avgSpacing);
+      }
+      for (A_long i = 1; i < numSlices; i++) {
+        float baseRandom = GetRandomValue(seed, i * 3779 + 2971);
+        float randomFactor = (baseRandom < 0.7f)
+                                 ? 0.2f + (baseRandom / 0.7f) * 0.7f
+                                 : 1.0f + ((baseRandom - 0.7f) / 0.3f) * 0.8f;
+        divPoints[i] += (randomFactor - 1.0f) * avgSpacing + baselineOffset;
+      }
+      // Sort
+      for (A_long i = 1; i < numSlices; i++) {
+        float key = divPoints[i];
+        A_long j = i - 1;
+        while (j >= 0 && divPoints[j] > key) {
+          divPoints[j + 1] = divPoints[j];
+          j--;
+        }
+        divPoints[j + 1] = key;
+      }
+      // Enforce minimum spacing
+      float minSpacing = avgSpacing * 0.05f;
+      for (A_long i = 1; i < numSlices; i++) {
+        if (divPoints[i] < divPoints[i - 1] + minSpacing) {
+          divPoints[i] = divPoints[i - 1] + minSpacing;
+        }
+      }
+    }
+
+    // Build segments
+    for (A_long i = 0; i < numSlices; i++) {
+      segments[i].sliceStart = divPoints[i];
+      segments[i].sliceEnd = divPoints[i + 1];
+      float sliceWidth = segments[i].sliceEnd - segments[i].sliceStart;
+      float sliceCenter = segments[i].sliceStart + sliceWidth * 0.5f;
+      float halfVisible = MAX(0.0f, sliceWidth * width * 0.5f);
+      segments[i].visibleStart = sliceCenter - halfVisible;
+      segments[i].visibleEnd = sliceCenter + halfVisible;
+
+      A_long dirSeed = (seed * 17 + i * 31) & 0x7FFF;
+      A_long factorSeed = (seed * 23 + i * 41) & 0x7FFF;
+      segments[i].shiftDirection =
+          shiftDirection * ((GetRandomValue(dirSeed, 0) > 0.5f) ? 1.0f : -1.0f);
+      segments[i].shiftRandomFactor =
+          0.5f + GetRandomValue(factorSeed, 0) * 1.5f;
+    }
+
+    // Set up context
+    SliceContext context;
+    context.srcData = input_world->data;
+    context.rowbytes = input_world->rowbytes;
+    context.width = imageWidth;
+    context.height = imageHeight;
+    context.centerX = centerX;
+    context.centerY = centerY;
+    context.angleCos = angleCos;
+    context.angleSin = angleSin;
+    context.shiftDirX = -angleSin;
+    context.shiftDirY = angleCos;
+    context.shiftAmount = shiftAmount;
+    context.numSlices = numSlices;
+    context.segments = segments;
+    float axisSpan = fabsf(angleCos) + fabsf(angleSin);
+    context.pixelSpan = MAX(1e-3f, resolution_scale * axisSpan);
+
+    // Iterate over output_world
+    if (PF_WORLD_IS_DEEP(input_world)) {
+      ERR(suites.Iterate16Suite1()->iterate(in_data, 0, output_world->height,
+                                            input_world, NULL, (void *)&context,
+                                            ProcessMultiSlice16, output_world));
+    } else {
+      ERR(suites.Iterate8Suite1()->iterate(in_data, 0, output_world->height,
+                                           input_world, NULL, (void *)&context,
+                                           ProcessMultiSlice, output_world));
+    }
+
+    suites.HandleSuite1()->host_dispose_handle(divPointsHandle);
+    suites.HandleSuite1()->host_dispose_handle(segmentsHandle);
+  }
+
+cleanup:
+  ERR(PF_CHECKIN_PARAM(in_data, &shift_param));
+  ERR(PF_CHECKIN_PARAM(in_data, &width_param));
+  ERR(PF_CHECKIN_PARAM(in_data, &slices_param));
+  ERR(PF_CHECKIN_PARAM(in_data, &anchor_param));
+  ERR(PF_CHECKIN_PARAM(in_data, &angle_param));
+  ERR(PF_CHECKIN_PARAM(in_data, &seed_param));
+
+  return err;
+}
+
 static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
                      PF_ParamDef *params[], PF_LayerDef *output) {
   PF_Err err = PF_Err_NONE;
@@ -633,7 +933,16 @@ extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData *in_data,
       err = ParamsSetup(in_data, out_data, params, output);
       break;
 
+    case PF_Cmd_SMART_PRE_RENDER:
+      err = PreRender(in_data, out_data, (PF_PreRenderExtra *)extra);
+      break;
+
+    case PF_Cmd_SMART_RENDER:
+      err = SmartRender(in_data, out_data, (PF_SmartRenderExtra *)extra);
+      break;
+
     case PF_Cmd_RENDER:
+      // Fallback for non-SmartFX hosts
       err = Render(in_data, out_data, params, output);
       break;
     }
