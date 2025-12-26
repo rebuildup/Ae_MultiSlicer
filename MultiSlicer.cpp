@@ -140,41 +140,117 @@ static float GetRandomValue(A_long seed, A_long index) {
 }
 
 // Simple nearest neighbor sampling - no antialiasing
+// Bilinear interpolation for 8-bit (Standard Premultiplied Alpha)
 static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
                                    const SliceContext *ctx) {
   PF_Pixel result = {0, 0, 0, 0};
 
-  A_long x = static_cast<A_long>(srcX + 0.5f);
-  A_long y = static_cast<A_long>(srcY + 0.5f);
+  // 1. Calculate coordinates and weights
+  float fx = srcX - 0.5f;
+  float fy = srcY - 0.5f;
+  A_long x0 = static_cast<A_long>(floorf(fx));
+  A_long y0 = static_cast<A_long>(floorf(fy));
+  A_long x1 = x0 + 1;
+  A_long y1 = y0 + 1;
+  float dx = fx - static_cast<float>(x0);
+  float dy = fy - static_cast<float>(y0);
 
-  if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
-    return result;
-  }
+  // 2. Clamp coordinates to valid range
+  // Using CLAMP to stick to edges is better than returning transparent for AA
+  auto clampX = [&](A_long x) { return CLAMP(x, 0, ctx->width - 1); };
+  auto clampY = [&](A_long y) { return CLAMP(y, 0, ctx->height - 1); };
 
-  PF_Pixel *p = reinterpret_cast<PF_Pixel *>(
-      reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
-      x * static_cast<A_long>(sizeof(PF_Pixel)));
+  A_long cx0 = clampX(x0);
+  A_long cx1 = clampX(x1);
+  A_long cy0 = clampY(y0);
+  A_long cy1 = clampY(y1);
 
-  return *p;
+  // Helper to read pixel directly
+  auto getPix = [&](A_long x, A_long y) -> PF_Pixel {
+    return *(reinterpret_cast<PF_Pixel *>(
+        reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
+        x * static_cast<A_long>(sizeof(PF_Pixel))));
+  };
+
+  PF_Pixel p00 = getPix(cx0, cy0);
+  PF_Pixel p10 = getPix(cx1, cy0);
+  PF_Pixel p01 = getPix(cx0, cy1);
+  PF_Pixel p11 = getPix(cx1, cy1);
+
+  // 3. Compute weights
+  float w00 = (1.0f - dx) * (1.0f - dy);
+  float w10 = dx * (1.0f - dy);
+  float w01 = (1.0f - dx) * dy;
+  float w11 = dx * dy;
+
+  // 4. Weighted Average (Works perfectly for Premultiplied Alpha)
+  float a =
+      w00 * p00.alpha + w10 * p10.alpha + w01 * p01.alpha + w11 * p11.alpha;
+  float r = w00 * p00.red + w10 * p10.red + w01 * p01.red + w11 * p11.red;
+  float g =
+      w00 * p00.green + w10 * p10.green + w01 * p01.green + w11 * p11.green;
+  float b = w00 * p00.blue + w10 * p10.blue + w01 * p01.blue + w11 * p11.blue;
+
+  result.alpha = static_cast<A_u_char>(CLAMP(a + 0.5f, 0.0f, 255.0f));
+  result.red = static_cast<A_u_char>(CLAMP(r + 0.5f, 0.0f, 255.0f));
+  result.green = static_cast<A_u_char>(CLAMP(g + 0.5f, 0.0f, 255.0f));
+  result.blue = static_cast<A_u_char>(CLAMP(b + 0.5f, 0.0f, 255.0f));
+
+  return result;
 }
 
-// Simple direct pixel access - no antialiasing (16-bit)
+// Bilinear interpolation for 16-bit
 static PF_Pixel16 SampleSourcePixel16(float srcX, float srcY,
                                       const SliceContext *ctx) {
   PF_Pixel16 result = {0, 0, 0, 0};
+  const float maxC = static_cast<float>(PF_MAX_CHAN16);
 
-  A_long x = static_cast<A_long>(srcX + 0.5f);
-  A_long y = static_cast<A_long>(srcY + 0.5f);
+  float fx = srcX - 0.5f;
+  float fy = srcY - 0.5f;
+  A_long x0 = static_cast<A_long>(floorf(fx));
+  A_long y0 = static_cast<A_long>(floorf(fy));
+  A_long x1 = x0 + 1;
+  A_long y1 = y0 + 1;
+  float dx = fx - static_cast<float>(x0);
+  float dy = fy - static_cast<float>(y0);
 
-  if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
-    return result;
-  }
+  auto clampX = [&](A_long x) { return CLAMP(x, 0, ctx->width - 1); };
+  auto clampY = [&](A_long y) { return CLAMP(y, 0, ctx->height - 1); };
 
-  PF_Pixel16 *p = reinterpret_cast<PF_Pixel16 *>(
-      reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
-      x * static_cast<A_long>(sizeof(PF_Pixel16)));
+  A_long cx0 = clampX(x0);
+  A_long cx1 = clampX(x1);
+  A_long cy0 = clampY(y0);
+  A_long cy1 = clampY(y1);
 
-  return *p;
+  auto getPix = [&](A_long x, A_long y) -> PF_Pixel16 {
+    return *(reinterpret_cast<PF_Pixel16 *>(
+        reinterpret_cast<char *>(ctx->srcData) + y * ctx->rowbytes +
+        x * static_cast<A_long>(sizeof(PF_Pixel16))));
+  };
+
+  PF_Pixel16 p00 = getPix(cx0, cy0);
+  PF_Pixel16 p10 = getPix(cx1, cy0);
+  PF_Pixel16 p01 = getPix(cx0, cy1);
+  PF_Pixel16 p11 = getPix(cx1, cy1);
+
+  float w00 = (1.0f - dx) * (1.0f - dy);
+  float w10 = dx * (1.0f - dy);
+  float w01 = (1.0f - dx) * dy;
+  float w11 = dx * dy;
+
+  float a =
+      w00 * p00.alpha + w10 * p10.alpha + w01 * p01.alpha + w11 * p11.alpha;
+  float r = w00 * p00.red + w10 * p10.red + w01 * p01.red + w11 * p11.red;
+  float g =
+      w00 * p00.green + w10 * p10.green + w01 * p01.green + w11 * p11.green;
+  float b = w00 * p00.blue + w10 * p10.blue + w01 * p01.blue + w11 * p11.blue;
+
+  result.alpha = static_cast<A_u_short>(CLAMP(a + 0.5f, 0.0f, maxC));
+  result.red = static_cast<A_u_short>(CLAMP(r + 0.5f, 0.0f, maxC));
+  result.green = static_cast<A_u_short>(CLAMP(g + 0.5f, 0.0f, maxC));
+  result.blue = static_cast<A_u_short>(CLAMP(b + 0.5f, 0.0f, maxC));
+
+  return result;
 }
 
 static inline void ComputeShiftedSourceCoords(const SliceContext *ctx,
@@ -250,8 +326,26 @@ static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
 
   const SliceSegment &seg = ctx->segments[idx];
 
-  // Visibility check for width parameter - strictly binary (no anti-aliasing)
-  if (sliceX < seg.visibleStart || sliceX > seg.visibleEnd) {
+  // Soft visibility check for anti-aliased edges
+  // Using 1.0 pixel smoothness for the edge
+  float coverage = 1.0f;
+  float feather = 0.5f;
+
+  if (sliceX < seg.visibleStart - feather ||
+      sliceX > seg.visibleEnd + feather) {
+    // Fully outside
+    coverage = 0.0f;
+  } else if (sliceX < seg.visibleStart + feather) {
+    // Left edge fade (0 to 1)
+    float t = (sliceX - (seg.visibleStart - feather)) / (2.0f * feather);
+    coverage = t;
+  } else if (sliceX > seg.visibleEnd - feather) {
+    // Right edge fade (1 to 0)
+    float t = ((seg.visibleEnd + feather) - sliceX) / (2.0f * feather);
+    coverage = t;
+  }
+
+  if (coverage <= 0.0f) {
     out->alpha = out->red = out->green = out->blue = 0;
     return err;
   }
@@ -259,7 +353,18 @@ static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
   float srcX = 0.0f, srcY = 0.0f;
   ComputeShiftedSourceCoords(ctx, seg, worldX, worldY, srcX, srcY);
 
-  *out = SampleSourcePixel8(srcX, srcY, ctx);
+  PF_Pixel sampled = SampleSourcePixel8(srcX, srcY, ctx);
+
+  if (coverage >= 1.0f) {
+    *out = sampled;
+  } else {
+    // Apply coverage to Premultiplied Alpha pixel
+    // Just multiply everything by coverage
+    out->alpha = static_cast<A_u_char>(sampled.alpha * coverage + 0.5f);
+    out->red = static_cast<A_u_char>(sampled.red * coverage + 0.5f);
+    out->green = static_cast<A_u_char>(sampled.green * coverage + 0.5f);
+    out->blue = static_cast<A_u_char>(sampled.blue * coverage + 0.5f);
+  }
 
   return err;
 }
@@ -289,8 +394,22 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
 
   const SliceSegment &seg = ctx->segments[idx];
 
-  // Visibility check for width parameter - strictly binary (no anti-aliasing)
-  if (sliceX < seg.visibleStart || sliceX > seg.visibleEnd) {
+  // Soft visibility check for anti-aliased edges
+  float coverage = 1.0f;
+  float feather = 0.5f;
+
+  if (sliceX < seg.visibleStart - feather ||
+      sliceX > seg.visibleEnd + feather) {
+    coverage = 0.0f;
+  } else if (sliceX < seg.visibleStart + feather) {
+    float t = (sliceX - (seg.visibleStart - feather)) / (2.0f * feather);
+    coverage = t;
+  } else if (sliceX > seg.visibleEnd - feather) {
+    float t = ((seg.visibleEnd + feather) - sliceX) / (2.0f * feather);
+    coverage = t;
+  }
+
+  if (coverage <= 0.0f) {
     out->alpha = out->red = out->green = out->blue = 0;
     return err;
   }
@@ -298,7 +417,16 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
   float srcX = 0.0f, srcY = 0.0f;
   ComputeShiftedSourceCoords(ctx, seg, worldX, worldY, srcX, srcY);
 
-  *out = SampleSourcePixel16(srcX, srcY, ctx);
+  PF_Pixel16 sampled = SampleSourcePixel16(srcX, srcY, ctx);
+
+  if (coverage >= 1.0f) {
+    *out = sampled;
+  } else {
+    out->alpha = static_cast<A_u_short>(sampled.alpha * coverage + 0.5f);
+    out->red = static_cast<A_u_short>(sampled.red * coverage + 0.5f);
+    out->green = static_cast<A_u_short>(sampled.green * coverage + 0.5f);
+    out->blue = static_cast<A_u_short>(sampled.blue * coverage + 0.5f);
+  }
 
   return err;
 }
