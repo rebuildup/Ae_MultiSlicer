@@ -256,9 +256,13 @@ static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
     return err;
   }
 
-  // Accumulate contributions from current and neighbor slices
-  // to properly handle soft edges and overlaps
-  float accumA = 0.0f, accumR = 0.0f, accumG = 0.0f, accumB = 0.0f;
+  // Accumulate contributions:
+  // For Alpha: Additive blending (sum of coverages) to ensure gapless joining.
+  // For RGB: Strictly preserve the source color of the most dominant slice.
+  // This avoids any "dark halo" caused by multiplying RGB by coverage.
+  float accumA = 0.0f;
+  PF_Pixel bestPixel = {0, 0, 0, 0};
+  float maxCoverage = -1.0f;
 
   auto accumulateSlice = [&](A_long sliceIdx) {
     if (sliceIdx < 0 || sliceIdx >= ctx->numSlices)
@@ -286,21 +290,25 @@ static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
     ComputeShiftedSourceCoords(ctx, seg, worldX, worldY, srcX, srcY);
     PF_Pixel p = SampleSourcePixel8(srcX, srcY, ctx);
 
-    // Premultiplied add
+    // Accumulate Alpha
     accumA += static_cast<float>(p.alpha) * coverage;
-    accumR += static_cast<float>(p.red) * coverage;
-    accumG += static_cast<float>(p.green) * coverage;
-    accumB += static_cast<float>(p.blue) * coverage;
+
+    // Keep the RGB of the slice that covers this pixel the most
+    if (coverage > maxCoverage) {
+      maxCoverage = coverage;
+      bestPixel = p; // Copy raw RGB
+    }
   };
 
   accumulateSlice(idx);
   accumulateSlice(idx - 1);
   accumulateSlice(idx + 1);
 
+  // Output: RGB from the best pixel (untouched), Alpha accumulated
   out->alpha = static_cast<A_u_char>(CLAMP(accumA + 0.5f, 0.0f, 255.0f));
-  out->red = static_cast<A_u_char>(CLAMP(accumR + 0.5f, 0.0f, 255.0f));
-  out->green = static_cast<A_u_char>(CLAMP(accumG + 0.5f, 0.0f, 255.0f));
-  out->blue = static_cast<A_u_char>(CLAMP(accumB + 0.5f, 0.0f, 255.0f));
+  out->red = bestPixel.red;
+  out->green = bestPixel.green;
+  out->blue = bestPixel.blue;
 
   return err;
 }
@@ -328,8 +336,10 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
     return err;
   }
 
-  float accumA = 0.0f, accumR = 0.0f, accumG = 0.0f, accumB = 0.0f;
+  float accumA = 0.0f;
   const float maxC = static_cast<float>(PF_MAX_CHAN16);
+  PF_Pixel16 bestPixel = {0, 0, 0, 0};
+  float maxCoverage = -1.0f;
 
   auto accumulateSlice = [&](A_long sliceIdx) {
     if (sliceIdx < 0 || sliceIdx >= ctx->numSlices)
@@ -357,11 +367,14 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
     ComputeShiftedSourceCoords(ctx, seg, worldX, worldY, srcX, srcY);
     PF_Pixel16 p = SampleSourcePixel16(srcX, srcY, ctx);
 
-    // Premultiplied add
+    // Accumulate Alpha
     accumA += static_cast<float>(p.alpha) * coverage;
-    accumR += static_cast<float>(p.red) * coverage;
-    accumG += static_cast<float>(p.green) * coverage;
-    accumB += static_cast<float>(p.blue) * coverage;
+
+    // Keep the RGB of the slice that covers this pixel the most
+    if (coverage > maxCoverage) {
+      maxCoverage = coverage;
+      bestPixel = p; // Copy raw RGB
+    }
   };
 
   accumulateSlice(idx);
@@ -369,9 +382,9 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
   accumulateSlice(idx + 1);
 
   out->alpha = static_cast<A_u_short>(CLAMP(accumA + 0.5f, 0.0f, maxC));
-  out->red = static_cast<A_u_short>(CLAMP(accumR + 0.5f, 0.0f, maxC));
-  out->green = static_cast<A_u_short>(CLAMP(accumG + 0.5f, 0.0f, maxC));
-  out->blue = static_cast<A_u_short>(CLAMP(accumB + 0.5f, 0.0f, maxC));
+  out->red = bestPixel.red;
+  out->green = bestPixel.green;
+  out->blue = bestPixel.blue;
 
   return err;
 }
