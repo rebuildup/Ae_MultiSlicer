@@ -558,6 +558,14 @@ static PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data,
   A_long imageWidth = input_world->width;
   A_long imageHeight = input_world->height;
 
+  // Declare all variables before any goto statements (MSVC requirement)
+  float centerX = 0.0f;
+  float centerY = 0.0f;
+  float angleRad = 0.0f;
+  float angleCos = 1.0f;
+  float angleSin = 0.0f;
+  float sliceLength = 0.0f;
+
   // Check for no-op case: copy input to output
   if ((shiftAmount < 0.001f && fabsf(width - 0.9999f) < 0.0001f) ||
       numSlices <= 1) {
@@ -568,19 +576,18 @@ static PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data,
 
   // Calculate center using logical layer dimensions (in_data->width/height)
   // but scaled for the actual buffer
-  float centerX = static_cast<float>(anchor_x) / 65536.0f;
-  float centerY = static_cast<float>(anchor_y) / 65536.0f;
+  centerX = static_cast<float>(anchor_x) / 65536.0f;
+  centerY = static_cast<float>(anchor_y) / 65536.0f;
 
   // Adjust center for the input buffer coordinate system using origin
   centerX = centerX - (float)input_world->origin_x;
   centerY = centerY - (float)input_world->origin_y;
 
-  float angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
-  float angleCos = cosf(angleRad);
-  float angleSin = sinf(angleRad);
-  float sliceLength =
-      2.0f * sqrtf(static_cast<float>(imageWidth * imageWidth +
-                                      imageHeight * imageHeight));
+  angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
+  angleCos = cosf(angleRad);
+  angleSin = sinf(angleRad);
+  sliceLength = 2.0f * sqrtf(static_cast<float>(imageWidth * imageWidth +
+                                                imageHeight * imageHeight));
 
   // Allocate segments
   {
