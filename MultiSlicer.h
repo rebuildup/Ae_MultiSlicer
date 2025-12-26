@@ -99,6 +99,11 @@ typedef struct {
   A_long numSlices;
   const SliceSegment *segments;
   float pixelSpan;
+  // SmartFX origin offsets for coordinate transformation
+  A_long inputOriginX;
+  A_long inputOriginY;
+  A_long outputOriginX;
+  A_long outputOriginY;
 } SliceContext;
 
 extern "C" {

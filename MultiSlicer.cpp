@@ -142,17 +142,15 @@ static float GetRandomValue(A_long seed, A_long index) {
 }
 
 // Simple nearest neighbor sampling - no antialiasing
-// Bilinear interpolation for 8-bit (Standard Premultiplied Alpha)
-// Bilinear interpolation ensuring no black fringe (8-bit)
 // Nearest Neighbor sampling to strictly preserve source colors (8-bit)
-// No bilinear interpolation to avoid any color bleeding or dark halos.
+// srcX/srcY are in LAYER coordinates, we need to convert to buffer coordinates
 static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
                                    const SliceContext *ctx) {
   PF_Pixel result = {0, 0, 0, 0};
 
-  // Round to nearest integer
-  A_long x = static_cast<A_long>(srcX + 0.5f);
-  A_long y = static_cast<A_long>(srcY + 0.5f);
+  // Convert layer coordinates to buffer coordinates using inputOrigin
+  A_long x = static_cast<A_long>(srcX + 0.5f) - ctx->inputOriginX;
+  A_long y = static_cast<A_long>(srcY + 0.5f) - ctx->inputOriginY;
 
   if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
     return result;
@@ -165,16 +163,15 @@ static PF_Pixel SampleSourcePixel8(float srcX, float srcY,
   return *p;
 }
 
-// Bilinear interpolation for 16-bit
-// Bilinear interpolation ensuring no black fringe (16-bit)
 // Nearest Neighbor sampling to strictly preserve source colors (16-bit)
+// srcX/srcY are in LAYER coordinates, we need to convert to buffer coordinates
 static PF_Pixel16 SampleSourcePixel16(float srcX, float srcY,
                                       const SliceContext *ctx) {
   PF_Pixel16 result = {0, 0, 0, 0};
 
-  // Round to nearest integer
-  A_long x = static_cast<A_long>(srcX + 0.5f);
-  A_long y = static_cast<A_long>(srcY + 0.5f);
+  // Convert layer coordinates to buffer coordinates using inputOrigin
+  A_long x = static_cast<A_long>(srcX + 0.5f) - ctx->inputOriginX;
+  A_long y = static_cast<A_long>(srcY + 0.5f) - ctx->inputOriginY;
 
   if (x < 0 || x >= ctx->width || y < 0 || y >= ctx->height) {
     return result;
@@ -245,8 +242,9 @@ static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
     return err;
   }
 
-  float worldX = static_cast<float>(x);
-  float worldY = static_cast<float>(y);
+  // Convert buffer coordinates (x,y) to layer coordinates using outputOrigin
+  float worldX = static_cast<float>(x) + static_cast<float>(ctx->outputOriginX);
+  float worldY = static_cast<float>(y) + static_cast<float>(ctx->outputOriginY);
   float sliceX = worldX;
   float sliceY = worldY;
   RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos,
@@ -338,8 +336,9 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
     return err;
   }
 
-  float worldX = static_cast<float>(x);
-  float worldY = static_cast<float>(y);
+  // Convert buffer coordinates (x,y) to layer coordinates using outputOrigin
+  float worldX = static_cast<float>(x) + static_cast<float>(ctx->outputOriginX);
+  float worldY = static_cast<float>(y) + static_cast<float>(ctx->outputOriginY);
   float sliceX = worldX;
   float sliceY = worldY;
   RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos,
@@ -574,14 +573,12 @@ static PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data,
     goto cleanup;
   }
 
-  // Calculate center using logical layer dimensions (in_data->width/height)
-  // but scaled for the actual buffer
+  // Calculate center in layer coordinates
+  // anchor_x/y are PF_Fixed values representing layer positions
   centerX = static_cast<float>(anchor_x) / 65536.0f;
   centerY = static_cast<float>(anchor_y) / 65536.0f;
-
-  // Adjust center for the input buffer coordinate system using origin
-  centerX = centerX - (float)input_world->origin_x;
-  centerY = centerY - (float)input_world->origin_y;
+  // Note: center stays in layer coordinates; ProcessMultiSlice converts
+  // buffer coords to layer coords before rotation
 
   angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
   angleCos = cosf(angleRad);
@@ -691,6 +688,11 @@ static PF_Err SmartRender(PF_InData *in_data, PF_OutData *out_data,
     context.segments = segments;
     float axisSpan = fabsf(angleCos) + fabsf(angleSin);
     context.pixelSpan = MAX(1e-3f, resolution_scale * axisSpan);
+    // SmartFX origin offsets for coordinate transformation
+    context.inputOriginX = input_world->origin_x;
+    context.inputOriginY = input_world->origin_y;
+    context.outputOriginX = output_world->origin_x;
+    context.outputOriginY = output_world->origin_y;
 
     // Iterate over output_world
     if (PF_WORLD_IS_DEEP(input_world)) {
@@ -886,6 +888,11 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
   float axisSpan = fabsf(angleCos) + fabsf(angleSin);
   float pixelSpan = MAX(1e-3f, resolution_scale * axisSpan);
   context.pixelSpan = pixelSpan;
+  // Traditional Render: no origin offset (buffer coords = layer coords)
+  context.inputOriginX = 0;
+  context.inputOriginY = 0;
+  context.outputOriginX = 0;
+  context.outputOriginY = 0;
 
   if (PF_WORLD_IS_DEEP(inputP)) {
     ERR(suites.Iterate16Suite1()->iterate(in_data, 0, imageHeight, inputP, NULL,
