@@ -634,12 +634,14 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
   context.output_origin_y = static_cast<float>(in_data->output_origin_y);
 
   // Iterate over output buffer (may be expanded by FrameSetup)
+  // IMPORTANT: Use outputP as src to avoid limiting to input buffer size
+  // (ProcessMultiSlice doesn't use the 'in' parameter anyway)
   if (PF_WORLD_IS_DEEP(inputP)) {
-    ERR(suites.Iterate16Suite1()->iterate(in_data, 0, outputP->height, inputP, NULL,
+    ERR(suites.Iterate16Suite1()->iterate(in_data, 0, outputP->height, outputP, NULL,
                                           (void *)&context, ProcessMultiSlice16,
                                           outputP));
   } else {
-    ERR(suites.Iterate8Suite1()->iterate(in_data, 0, outputP->height, inputP, NULL,
+    ERR(suites.Iterate8Suite1()->iterate(in_data, 0, outputP->height, outputP, NULL,
                                          (void *)&context, ProcessMultiSlice,
                                          outputP));
   }
