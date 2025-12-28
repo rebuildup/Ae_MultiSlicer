@@ -500,9 +500,12 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
   float angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
   float angleCos = cosf(angleRad);
   float angleSin = sinf(angleRad);
+  // Use expanded buffer size for sliceLength to cover out-of-bounds rendering
+  A_long expandedWidth = outputP->width;
+  A_long expandedHeight = outputP->height;
   float sliceLength =
-      2.0f * sqrtf(static_cast<float>(imageWidth * imageWidth +
-                                      imageHeight * imageHeight));
+      2.0f * sqrtf(static_cast<float>(expandedWidth * expandedWidth +
+                                      expandedHeight * expandedHeight));
 
   PF_Handle segmentsHandle =
       suites.HandleSuite1()->host_new_handle(numSlices * sizeof(SliceSegment));
