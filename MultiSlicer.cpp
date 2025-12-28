@@ -127,13 +127,6 @@ static PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data,
   return err;
 }
 
-// Helper function to get downscale factor
-static float GetDownscaleFactor(const PF_RationalScale &scale) {
-  if (scale.num == 0)
-    return 1.0f;
-  return static_cast<float>(scale.den) / static_cast<float>(scale.num);
-}
-
 // FrameSetup: expand output buffer based on shift amount  
 static PF_Err FrameSetup(PF_InData *in_data, PF_OutData *out_data,
                          PF_ParamDef *params[], PF_LayerDef *output) {
