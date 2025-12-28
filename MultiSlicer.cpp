@@ -252,9 +252,20 @@ static void RotatePoint(float centerX, float centerY, float &x, float &y,
 
 // Binary search to find the slice whose [sliceStart, sliceEnd]
 // range contains the given slice-space coordinate.
+// For out-of-bounds rendering: return edge slice if outside range
 static inline A_long FindSliceIndex(const SliceContext *ctx, float sliceX) {
   if (!ctx || ctx->numSlices <= 0) {
     return -1;
+  }
+
+  // Check if before first slice
+  if (sliceX < ctx->segments[0].sliceStart) {
+    return 0; // Use first slice for out-of-bounds left
+  }
+  
+  // Check if after last slice
+  if (sliceX > ctx->segments[ctx->numSlices - 1].sliceEnd) {
+    return ctx->numSlices - 1; // Use last slice for out-of-bounds right
   }
 
   A_long low = 0;
@@ -273,7 +284,8 @@ static inline A_long FindSliceIndex(const SliceContext *ctx, float sliceX) {
     }
   }
 
-  return -1;
+  // Should not reach here, but return nearest slice
+  return (low < ctx->numSlices) ? low : ctx->numSlices - 1;
 }
 
 static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
@@ -500,12 +512,11 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
   float angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
   float angleCos = cosf(angleRad);
   float angleSin = sinf(angleRad);
-  // Use expanded buffer size for sliceLength to cover out-of-bounds rendering
-  A_long expandedWidth = outputP->width;
-  A_long expandedHeight = outputP->height;
+  // Use LAYER size for sliceLength (controls slice spacing/appearance)
+  // Not expanded buffer size - that would stretch the slices
   float sliceLength =
-      2.0f * sqrtf(static_cast<float>(expandedWidth * expandedWidth +
-                                      expandedHeight * expandedHeight));
+      2.0f * sqrtf(static_cast<float>(imageWidth * imageWidth +
+                                      imageHeight * imageHeight));
 
   PF_Handle segmentsHandle =
       suites.HandleSuite1()->host_new_handle(numSlices * sizeof(SliceSegment));
