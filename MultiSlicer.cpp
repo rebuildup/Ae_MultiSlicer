@@ -253,27 +253,49 @@ static void RotatePoint(float centerX, float centerY, float &x, float &y,
 // Binary search to find the slice whose [sliceStart, sliceEnd]
 // range contains the given slice-space coordinate.
 // For out-of-bounds rendering: return edge slice if outside range
+// Optimized: linear search for small slice counts, immediate return for single slice
 static inline A_long FindSliceIndex(const SliceContext *ctx, float sliceX) {
-  if (!ctx || ctx->numSlices <= 0) {
+  const A_long numSlices = ctx->numSlices;
+  
+  if (numSlices <= 0) {
     return -1;
   }
+  
+  // Fast path: single slice
+  if (numSlices == 1) {
+    return 0;
+  }
 
+  const SliceSegment *segments = ctx->segments;
+  
   // Check if before first slice
-  if (sliceX < ctx->segments[0].sliceStart) {
-    return 0; // Use first slice for out-of-bounds left
+  if (sliceX < segments[0].sliceStart) {
+    return 0;
   }
   
   // Check if after last slice
-  if (sliceX > ctx->segments[ctx->numSlices - 1].sliceEnd) {
-    return ctx->numSlices - 1; // Use last slice for out-of-bounds right
+  if (sliceX > segments[numSlices - 1].sliceEnd) {
+    return numSlices - 1;
   }
 
+  // For small slice counts, linear search is faster due to cache locality
+  if (numSlices <= 8) {
+    for (A_long i = 0; i < numSlices; ++i) {
+      if (sliceX >= segments[i].sliceStart && sliceX <= segments[i].sliceEnd) {
+        return i;
+      }
+    }
+    // Fallback to nearest
+    return 0;
+  }
+
+  // Binary search for larger slice counts
   A_long low = 0;
-  A_long high = ctx->numSlices - 1;
+  A_long high = numSlices - 1;
 
   while (low <= high) {
     A_long mid = (low + high) >> 1;
-    const SliceSegment &seg = ctx->segments[mid];
+    const SliceSegment &seg = segments[mid];
 
     if (sliceX < seg.sliceStart) {
       high = mid - 1;
@@ -285,7 +307,7 @@ static inline A_long FindSliceIndex(const SliceContext *ctx, float sliceX) {
   }
 
   // Should not reach here, but return nearest slice
-  return (low < ctx->numSlices) ? low : ctx->numSlices - 1;
+  return (low < numSlices) ? low : numSlices - 1;
 }
 
 static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
