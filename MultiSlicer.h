@@ -30,6 +30,10 @@ typedef unsigned short PixelType;
 
 #include "MultiSlicer_Strings.h"
 
+#include <thread>
+#include <vector>
+#include <algorithm>
+
 /* Versioning information */
 #define MAJOR_VERSION 1
 #define MINOR_VERSION 0
@@ -102,6 +106,12 @@ typedef struct {
   // Origin offset for coordinate transformation (buffer coords -> layer coords)
   float output_origin_x;
   float output_origin_y;
+  // Output buffer info for multi-threaded rendering
+  void *dstData;
+  A_long dst_rowbytes;
+  A_long dst_width;
+  A_long dst_height;
+  bool is_16bit;
 } SliceContext;
 
 extern "C" {

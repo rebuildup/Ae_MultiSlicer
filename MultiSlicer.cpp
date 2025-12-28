@@ -469,6 +469,166 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
   return err;
 }
 
+// Multi-threaded row processing function (8-bit)
+static void ProcessRows8(const SliceContext &ctx, int start_y, int end_y) {
+  for (int y = start_y; y < end_y; ++y) {
+    PF_Pixel *dst_row = reinterpret_cast<PF_Pixel *>(
+        reinterpret_cast<char *>(ctx.dstData) + y * ctx.dst_rowbytes);
+    
+    for (int x = 0; x < ctx.dst_width; ++x) {
+      PF_Pixel *out = &dst_row[x];
+      
+      // Convert buffer coordinates to layer coordinates
+      float worldX = static_cast<float>(x) - ctx.output_origin_x;
+      float worldY = static_cast<float>(y) - ctx.output_origin_y;
+      float sliceX = worldX;
+      float sliceY = worldY;
+      RotatePoint(ctx.centerX, ctx.centerY, sliceX, sliceY, ctx.angleCos,
+                  -ctx.angleSin);
+      
+      const A_long idx = FindSliceIndex(&ctx, sliceX);
+      if (idx < 0) {
+        out->alpha = out->red = out->green = out->blue = 0;
+        continue;
+      }
+      
+      float accumA = 0.0f;
+      PF_Pixel bestPixel = {0, 0, 0, 0};
+      float maxCoverage = -1.0f;
+      
+      auto accumulateSlice = [&](A_long sliceIdx) {
+        if (sliceIdx < 0 || sliceIdx >= ctx.numSlices)
+          return;
+        
+        const SliceSegment &seg = ctx.segments[sliceIdx];
+        float coverage = 1.0f;
+        float feather = 0.5f;
+        
+        if (sliceX < seg.visibleStart - feather ||
+            sliceX > seg.visibleEnd + feather) {
+          return;
+        } else if (sliceX < seg.visibleStart + feather) {
+          coverage = (sliceX - (seg.visibleStart - feather)) / (2.0f * feather);
+        } else if (sliceX > seg.visibleEnd - feather) {
+          coverage = ((seg.visibleEnd + feather) - sliceX) / (2.0f * feather);
+        }
+        
+        if (coverage <= 0.001f)
+          return;
+        
+        float srcX = 0.0f, srcY = 0.0f;
+        ComputeShiftedSourceCoords(&ctx, seg, worldX, worldY, srcX, srcY);
+        PF_Pixel p = SampleSourcePixel8(srcX, srcY, &ctx);
+        
+        accumA += static_cast<float>(p.alpha) * coverage;
+        
+        bool currentIsOpaque = (p.alpha > 0);
+        bool bestIsOpaque = (bestPixel.alpha > 0);
+        
+        if (currentIsOpaque && !bestIsOpaque) {
+          maxCoverage = coverage;
+          bestPixel = p;
+        } else if (currentIsOpaque == bestIsOpaque) {
+          if (coverage > maxCoverage) {
+            maxCoverage = coverage;
+            bestPixel = p;
+          }
+        }
+      };
+      
+      accumulateSlice(idx);
+      accumulateSlice(idx - 1);
+      accumulateSlice(idx + 1);
+      
+      out->alpha = static_cast<A_u_char>(CLAMP(accumA + 0.5f, 0.0f, 255.0f));
+      out->red = bestPixel.red;
+      out->green = bestPixel.green;
+      out->blue = bestPixel.blue;
+    }
+  }
+}
+
+// Multi-threaded row processing function (16-bit)
+static void ProcessRows16(const SliceContext &ctx, int start_y, int end_y) {
+  const float maxC = static_cast<float>(PF_MAX_CHAN16);
+  
+  for (int y = start_y; y < end_y; ++y) {
+    PF_Pixel16 *dst_row = reinterpret_cast<PF_Pixel16 *>(
+        reinterpret_cast<char *>(ctx.dstData) + y * ctx.dst_rowbytes);
+    
+    for (int x = 0; x < ctx.dst_width; ++x) {
+      PF_Pixel16 *out = &dst_row[x];
+      
+      // Convert buffer coordinates to layer coordinates
+      float worldX = static_cast<float>(x) - ctx.output_origin_x;
+      float worldY = static_cast<float>(y) - ctx.output_origin_y;
+      float sliceX = worldX;
+      float sliceY = worldY;
+      RotatePoint(ctx.centerX, ctx.centerY, sliceX, sliceY, ctx.angleCos,
+                  -ctx.angleSin);
+      
+      const A_long idx = FindSliceIndex(&ctx, sliceX);
+      if (idx < 0) {
+        out->alpha = out->red = out->green = out->blue = 0;
+        continue;
+      }
+      
+      float accumA = 0.0f;
+      PF_Pixel16 bestPixel = {0, 0, 0, 0};
+      float maxCoverage = -1.0f;
+      
+      auto accumulateSlice = [&](A_long sliceIdx) {
+        if (sliceIdx < 0 || sliceIdx >= ctx.numSlices)
+          return;
+        
+        const SliceSegment &seg = ctx.segments[sliceIdx];
+        float coverage = 1.0f;
+        float feather = 0.5f;
+        
+        if (sliceX < seg.visibleStart - feather ||
+            sliceX > seg.visibleEnd + feather) {
+          return;
+        } else if (sliceX < seg.visibleStart + feather) {
+          coverage = (sliceX - (seg.visibleStart - feather)) / (2.0f * feather);
+        } else if (sliceX > seg.visibleEnd - feather) {
+          coverage = ((seg.visibleEnd + feather) - sliceX) / (2.0f * feather);
+        }
+        
+        if (coverage <= 0.001f)
+          return;
+        
+        float srcX = 0.0f, srcY = 0.0f;
+        ComputeShiftedSourceCoords(&ctx, seg, worldX, worldY, srcX, srcY);
+        PF_Pixel16 p = SampleSourcePixel16(srcX, srcY, &ctx);
+        
+        accumA += static_cast<float>(p.alpha) * coverage;
+        
+        bool currentIsOpaque = (p.alpha > 0);
+        bool bestIsOpaque = (bestPixel.alpha > 0);
+        
+        if (currentIsOpaque && !bestIsOpaque) {
+          maxCoverage = coverage;
+          bestPixel = p;
+        } else if (currentIsOpaque == bestIsOpaque) {
+          if (coverage > maxCoverage) {
+            maxCoverage = coverage;
+            bestPixel = p;
+          }
+        }
+      };
+      
+      accumulateSlice(idx);
+      accumulateSlice(idx - 1);
+      accumulateSlice(idx + 1);
+      
+      out->alpha = static_cast<A_u_short>(CLAMP(accumA + 0.5f, 0.0f, maxC));
+      out->red = bestPixel.red;
+      out->green = bestPixel.green;
+      out->blue = bestPixel.blue;
+    }
+  }
+}
+
 static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
                      PF_ParamDef *params[], PF_LayerDef *output) {
   PF_Err err = PF_Err_NONE;
@@ -640,21 +800,42 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
   float pixelSpan = MAX(1e-3f, resolution_scale * axisSpan);
   context.pixelSpan = pixelSpan;
   // Set origin for coordinate transformation (from FrameSetup expansion)
-  // IMPORTANT: Use in_data->output_origin_x, NOT outputP->origin_x
   context.output_origin_x = static_cast<float>(in_data->output_origin_x);
   context.output_origin_y = static_cast<float>(in_data->output_origin_y);
+  // Output buffer info for multi-threaded rendering
+  context.dstData = outputP->data;
+  context.dst_rowbytes = outputP->rowbytes;
+  context.dst_width = outputP->width;
+  context.dst_height = outputP->height;
+  context.is_16bit = PF_WORLD_IS_DEEP(inputP);
 
-  // Iterate over output buffer (may be expanded by FrameSetup)
-  // IMPORTANT: Use outputP as src to avoid limiting to input buffer size
-  // (ProcessMultiSlice doesn't use the 'in' parameter anyway)
-  if (PF_WORLD_IS_DEEP(inputP)) {
-    ERR(suites.Iterate16Suite1()->iterate(in_data, 0, outputP->height, outputP, NULL,
-                                          (void *)&context, ProcessMultiSlice16,
-                                          outputP));
-  } else {
-    ERR(suites.Iterate8Suite1()->iterate(in_data, 0, outputP->height, outputP, NULL,
-                                         (void *)&context, ProcessMultiSlice,
-                                         outputP));
+  // Multi-threaded row processing (same approach as Stretch plugin)
+  const int height = outputP->height;
+  const int num_threads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
+  const int rows_per_thread = (height + num_threads - 1) / num_threads;
+
+  std::vector<std::thread> threads;
+  threads.reserve(num_threads);
+
+  for (int t = 0; t < num_threads; ++t) {
+    const int start_y = t * rows_per_thread;
+    const int end_y = std::min(start_y + rows_per_thread, height);
+
+    if (start_y >= height)
+      break;
+
+    threads.emplace_back([&context, start_y, end_y]() {
+      if (context.is_16bit) {
+        ProcessRows16(context, start_y, end_y);
+      } else {
+        ProcessRows8(context, start_y, end_y);
+      }
+    });
+  }
+
+  // Wait for all threads to complete
+  for (auto &t : threads) {
+    t.join();
   }
 
   suites.HandleSuite1()->host_dispose_handle(segmentsHandle);
