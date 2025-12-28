@@ -811,7 +811,7 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
 
   // Multi-threaded row processing (same approach as Stretch plugin)
   const int height = outputP->height;
-  const int num_threads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
+  const int num_threads = (std::max)(1, static_cast<int>(std::thread::hardware_concurrency()));
   const int rows_per_thread = (height + num_threads - 1) / num_threads;
 
   std::vector<std::thread> threads;
@@ -819,7 +819,7 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
 
   for (int t = 0; t < num_threads; ++t) {
     const int start_y = t * rows_per_thread;
-    const int end_y = std::min(start_y + rows_per_thread, height);
+    const int end_y = (std::min)(start_y + rows_per_thread, height);
 
     if (start_y >= height)
       break;
