@@ -71,10 +71,11 @@ static PF_Err GlobalSetup(PF_InData *in_data, PF_OutData *out_data,
   out_data->my_version = PF_VERSION(MAJOR_VERSION, MINOR_VERSION, BUG_VERSION,
                                     STAGE_VERSION, BUILD_VERSION);
 
-  // Support 16-bit, multiprocessing, and Multi-Frame Rendering
-  out_data->out_flags = PF_OutFlag_DEEP_COLOR_AWARE;
-  out_data->out_flags |= PF_OutFlag_PIX_INDEPENDENT;
-  out_data->out_flags |= PF_OutFlag_SEND_UPDATE_PARAMS_UI;
+  // Support 16-bit, pixel-independent, and buffer expansion for out-of-bounds rendering
+  out_data->out_flags = PF_OutFlag_DEEP_COLOR_AWARE |
+                        PF_OutFlag_PIX_INDEPENDENT |
+                        PF_OutFlag_I_EXPAND_BUFFER |
+                        PF_OutFlag_SEND_UPDATE_PARAMS_UI;
 
   // Enable Multi-Frame Rendering support
   out_data->out_flags2 = PF_OutFlag2_SUPPORTS_THREADED_RENDERING;
@@ -123,6 +124,54 @@ static PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data,
 
   out_data->num_params = MULTISLICER_NUM_PARAMS;
 
+  return err;
+}
+
+// Helper function to get downscale factor
+static float GetDownscaleFactor(const PF_RationalScale &scale) {
+  if (scale.num == 0)
+    return 1.0f;
+  return static_cast<float>(scale.den) / static_cast<float>(scale.num);
+}
+
+// FrameSetup: expand output buffer based on shift amount  
+static PF_Err FrameSetup(PF_InData *in_data, PF_OutData *out_data,
+                         PF_ParamDef *params[], PF_LayerDef *output) {
+  PF_Err err = PF_Err_NONE;
+  
+  // Get input dimensions
+  PF_LayerDef *input = &params[MULTISLICER_INPUT]->u.ld;
+  const int input_width = input->width;
+  const int input_height = input->height;
+  
+  if (input_width <= 0 || input_height <= 0) {
+    return PF_Err_NONE;
+  }
+  
+  // Get shift parameter
+  float shiftRaw = params[MULTISLICER_SHIFT]->u.fs_d.value;
+  
+  // Downsample adjustment
+  float downscale_x = GetDownscaleFactor(in_data->downsample_x);
+  float downscale_y = GetDownscaleFactor(in_data->downsample_y);
+  float resolution_scale = MIN(downscale_x, downscale_y);
+  float shiftAmount = fabsf(shiftRaw) * resolution_scale;
+  
+  // If no shift, no expansion needed
+  if (shiftAmount < 0.01f) {
+    return PF_Err_NONE;
+  }
+  
+  // Calculate expansion needed (shift can occur in any direction)
+  // Use maximum possible shift with some margin
+  int expansion = static_cast<int>(ceilf(shiftAmount * 2.5f)) + 5;
+  
+  // Set output dimensions and origin
+  out_data->width = input_width + expansion * 2;
+  out_data->height = input_height + expansion * 2;
+  out_data->origin.h = static_cast<short>(expansion);
+  out_data->origin.v = static_cast<short>(expansion);
+  
   return err;
 }
 
@@ -243,8 +292,10 @@ static PF_Err ProcessMultiSlice(void *refcon, A_long x, A_long y, PF_Pixel *in,
     return err;
   }
 
-  float worldX = static_cast<float>(x);
-  float worldY = static_cast<float>(y);
+  // Convert buffer coordinates to layer coordinates
+  // Buffer coord (x,y) -> Layer coord (x - origin_x, y - origin_y)
+  float worldX = static_cast<float>(x) - ctx->output_origin_x;
+  float worldY = static_cast<float>(y) - ctx->output_origin_y;
   float sliceX = worldX;
   float sliceY = worldY;
   RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos,
@@ -336,8 +387,10 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
     return err;
   }
 
-  float worldX = static_cast<float>(x);
-  float worldY = static_cast<float>(y);
+  // Convert buffer coordinates to layer coordinates
+  // Buffer coord (x,y) -> Layer coord (x - origin_x, y - origin_y)
+  float worldX = static_cast<float>(x) - ctx->output_origin_x;
+  float worldY = static_cast<float>(y) - ctx->output_origin_y;
   float sliceX = worldX;
   float sliceY = worldY;
   RotatePoint(ctx->centerX, ctx->centerY, sliceX, sliceY, ctx->angleCos,
@@ -579,13 +632,17 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
   float axisSpan = fabsf(angleCos) + fabsf(angleSin);
   float pixelSpan = MAX(1e-3f, resolution_scale * axisSpan);
   context.pixelSpan = pixelSpan;
+  // Set origin for coordinate transformation (from FrameSetup expansion)
+  context.output_origin_x = static_cast<float>(outputP->origin_x);
+  context.output_origin_y = static_cast<float>(outputP->origin_y);
 
+  // Iterate over output buffer (may be expanded by FrameSetup)
   if (PF_WORLD_IS_DEEP(inputP)) {
-    ERR(suites.Iterate16Suite1()->iterate(in_data, 0, imageHeight, inputP, NULL,
+    ERR(suites.Iterate16Suite1()->iterate(in_data, 0, outputP->height, inputP, NULL,
                                           (void *)&context, ProcessMultiSlice16,
                                           outputP));
   } else {
-    ERR(suites.Iterate8Suite1()->iterate(in_data, 0, imageHeight, inputP, NULL,
+    ERR(suites.Iterate8Suite1()->iterate(in_data, 0, outputP->height, inputP, NULL,
                                          (void *)&context, ProcessMultiSlice,
                                          outputP));
   }
@@ -631,6 +688,10 @@ extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData *in_data,
 
     case PF_Cmd_PARAMS_SETUP:
       err = ParamsSetup(in_data, out_data, params, output);
+      break;
+
+    case PF_Cmd_FRAME_SETUP:
+      err = FrameSetup(in_data, out_data, params, output);
       break;
 
     case PF_Cmd_RENDER:

@@ -1,0 +1,50 @@
+c777eca fix: proper coordinate transformation with FRAME_SETUP origin
+ab26930 fix: correct PiPL flags to match code (0x06000600)
+8415a89 refactor: replace SmartFX with simpler FRAME_SETUP approach
+f7e412d fix: simplify coordinate handling - use x,y directly as layer coordinates
+4a40b95 fix: correct coordinate transformation for SmartFX rendering
+daa8354 fix: Use layer dimensions for slice calculations, buffer dimensions for pixel access
+faa1a03 fix: Correct SmartFX coordinate handling and PiPL outflags
+d274a88 fix: Move variable declarations before goto for MSVC compatibility
+beb649b feat: Add SmartFX support for out-of-bounds rendering
+47f4c5e fix: Prioritize opaque pixels over transparent ones when selecting RGB color to prevent picking black from outside slice boundaries.
+6def8cd fix: Strictly preserve RGB channels during edge blending to fix black fringing
+8f3cceb fix: Revert to Nearest Neighbor sampling to strictly preserve colors
+7608d52 fix: Resolve black halo, slice gaps, and movement limits
+f711c1e feat: Re-implement correct premultiplied anti-aliasing
+a76d03f Add DMG creation and notarization workflow like RGBDelay
+a5a1ac3 refactor: Completely eliminate all anti-aliasing logic
+b3da3dd refactor: Remove all antialiasing, use direct pixel access only
+76465d5 fix: Simplify to correct premultiplied bilinear interpolation
+4f7658e fix: Correct antialiasing - alpha uses full bilinear, RGB from nearest opaque
+78b6efe fix: Use hybrid sampling - RGB from nearest opaque, alpha from bilinear
+d7e0f30 fix: Exclude transparent pixels completely from bilinear interpolation
+8622bb0 feat: Add high-quality bilinear interpolation with proper alpha handling
+d0166ad fix: Make notarization step non-blocking
+928d0b8 chore: Update .gitignore and remove DerivedData from tracking
+cbcc07f fix: Improve code signing with better debugging and error handling
+2646639 feat: Add proper code signing and notarization for macOS
+c233798 fix: Add ad-hoc code signing and improve PiPL generation for macOS 14+ compatibility
+57281a1 build: Add header and resource search paths and GCC private extern symbol setting to build workflow and Xcode project.
+5031f1c refactor: rename plugin entry point from MultiSlicerEntry to EffectMain
+b227562 refactor: Rename plugin entry point from EffectMain to MultiSlicerEntry
+c3b337d refactor: Update plugin entry point name from EffectMain to MultiSlicerEntry in PiPL and CI build verification.
+bb35a0f refactor: rename plugin entry point to MultiSlicerEntry and reformat source code.
+e74b733 build: ignore After Effects plugin build artifacts and remove specific linker flags from Xcode project.
+23b409f feat: Add MultiSlicer After Effects plugin and update its symbol export configuration.
+df08111 refactor: Externalize exported symbols for MultiSlicer into `exports.exp` and update project settings to use it.
+c5c4124 feat: Add `PluginDataEntryFunction2` declaration, update Mac linker flags, and implement Windows build in CI.
+8f0b57a feat: Add exported symbols for macOS build and normalize output directory paths for Windows build.
+326dccb build: Adjust Xcode project settings by disabling private extern symbols, dead code stripping, and explicit symbol export.
+3be3d31 Remove unnecessary macOS conditional compilation from MultiSlicerPiPL.r and add PiPL resource generation step in the build workflow for improved clarity and functionality.
+c107e3d Update project settings to move MultiSlicerPiPL.r from Rez to Resources, streamlining build phases in the MultiSlicer project.
+c11e3b4 Add macOS code signing step to build workflow and update project settings for symbol export
+4d0f685 Consolidate linker flags for symbol export in MultiSlicer project, replacing specific exported symbols with a reference to an external exports list for improved maintainability.
+8bb6a78 Refactor project settings to streamline symbol export for plugin entry points by consolidating linker flags in MultiSlicer project.
+193f52f Update project settings to export specific symbols for plugin entry points and refresh .DS_Store file.
+9596407 Update project settings to specify C++14 standard and libc++ library, and refresh .DS_Store file.
+db70087 Add verification for exported entry points in build workflow and update project settings to expose symbols
+4a92751 Update project settings to disable ONLY_ACTIVE_ARCH for improved build configuration in MultiSlicer project.
+ab87dda Improve alpha handling in multi-slice processing by introducing thresholds for low-alpha samples, ensuring accurate color retrieval from neighboring pixels. Update logic to prevent color bleeding by treating low-alpha samples as "unknown color" and adjusting color accumulation accordingly. Enhance comments for clarity on the new approach.
+041a2df Enhance multi-slice processing by introducing functions for shifted source coordinate calculations and straight color estimation from neighboring pixels. Update color accumulation logic to utilize straight color values for improved blending accuracy, preventing color bleeding from transparent samples. Refactor existing functions for clarity and maintainability.
+318803f Refactor multi-slice color accumulation to utilize premultiplied channels, enhancing blending accuracy and preventing color bleeding from low-alpha samples. Update comments for clarity on the new accumulation strategy.

@@ -99,6 +99,9 @@ typedef struct {
   A_long numSlices;
   const SliceSegment *segments;
   float pixelSpan;
+  // Origin offset for coordinate transformation (buffer coords -> layer coords)
+  float output_origin_x;
+  float output_origin_y;
 } SliceContext;
 
 extern "C" {
