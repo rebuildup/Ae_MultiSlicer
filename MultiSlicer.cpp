@@ -626,8 +626,9 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
   float pixelSpan = MAX(1e-3f, resolution_scale * axisSpan);
   context.pixelSpan = pixelSpan;
   // Set origin for coordinate transformation (from FrameSetup expansion)
-  context.output_origin_x = static_cast<float>(outputP->origin_x);
-  context.output_origin_y = static_cast<float>(outputP->origin_y);
+  // IMPORTANT: Use in_data->output_origin_x, NOT outputP->origin_x
+  context.output_origin_x = static_cast<float>(in_data->output_origin_x);
+  context.output_origin_y = static_cast<float>(in_data->output_origin_y);
 
   // Iterate over output buffer (may be expanded by FrameSetup)
   if (PF_WORLD_IS_DEEP(inputP)) {
