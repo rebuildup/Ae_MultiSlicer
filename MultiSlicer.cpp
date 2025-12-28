@@ -469,162 +469,221 @@ static PF_Err ProcessMultiSlice16(void *refcon, A_long x, A_long y,
   return err;
 }
 
-// Multi-threaded row processing function (8-bit)
+// Inline slice accumulation for 8-bit (no lambda overhead)
+static inline void AccumulateSlice8(
+    const SliceContext *ctx, A_long sliceIdx, float sliceX,
+    float worldX, float worldY, float &accumA,
+    PF_Pixel &bestPixel, float &maxCoverage) {
+  if (sliceIdx < 0 || sliceIdx >= ctx->numSlices)
+    return;
+
+  const SliceSegment &seg = ctx->segments[sliceIdx];
+  constexpr float feather = 0.5f;
+  constexpr float inv_feather2 = 1.0f / (2.0f * feather);
+
+  if (sliceX < seg.visibleStart - feather || sliceX > seg.visibleEnd + feather)
+    return;
+
+  float coverage = 1.0f;
+  if (sliceX < seg.visibleStart + feather) {
+    coverage = (sliceX - seg.visibleStart + feather) * inv_feather2;
+  } else if (sliceX > seg.visibleEnd - feather) {
+    coverage = (seg.visibleEnd + feather - sliceX) * inv_feather2;
+  }
+
+  if (coverage <= 0.001f)
+    return;
+
+  // Inline shifted source coordinate calculation
+  float offsetPixels =
+      ctx->shiftAmount * seg.shiftRandomFactor * seg.shiftDirection;
+  float srcX = worldX + ctx->shiftDirX * offsetPixels;
+  float srcY = worldY + ctx->shiftDirY * offsetPixels;
+
+  // Inline sample
+  A_long sx = static_cast<A_long>(srcX + 0.5f);
+  A_long sy = static_cast<A_long>(srcY + 0.5f);
+
+  PF_Pixel p = {0, 0, 0, 0};
+  if (sx >= 0 && sx < ctx->width && sy >= 0 && sy < ctx->height) {
+    p = *reinterpret_cast<PF_Pixel *>(
+        reinterpret_cast<char *>(ctx->srcData) + sy * ctx->rowbytes +
+        sx * static_cast<A_long>(sizeof(PF_Pixel)));
+  }
+
+  accumA += static_cast<float>(p.alpha) * coverage;
+
+  bool currentIsOpaque = (p.alpha > 0);
+  bool bestIsOpaque = (bestPixel.alpha > 0);
+
+  if (currentIsOpaque && !bestIsOpaque) {
+    maxCoverage = coverage;
+    bestPixel = p;
+  } else if (currentIsOpaque == bestIsOpaque && coverage > maxCoverage) {
+    maxCoverage = coverage;
+    bestPixel = p;
+  }
+}
+
+// Multi-threaded row processing function (8-bit) - optimized
 static void ProcessRows8(const SliceContext &ctx, int start_y, int end_y) {
+  // Pre-compute loop invariants
+  const float origin_x = ctx.output_origin_x;
+  const float origin_y = ctx.output_origin_y;
+  const float centerX = ctx.centerX;
+  const float centerY = ctx.centerY;
+  const float angleCos = ctx.angleCos;
+  const float negAngleSin = -ctx.angleSin;
+  const int dst_width = ctx.dst_width;
+  const A_long dst_rowbytes = ctx.dst_rowbytes;
+  char *dstBase = reinterpret_cast<char *>(ctx.dstData);
+
   for (int y = start_y; y < end_y; ++y) {
-    PF_Pixel *dst_row = reinterpret_cast<PF_Pixel *>(
-        reinterpret_cast<char *>(ctx.dstData) + y * ctx.dst_rowbytes);
-    
-    for (int x = 0; x < ctx.dst_width; ++x) {
-      PF_Pixel *out = &dst_row[x];
-      
-      // Convert buffer coordinates to layer coordinates
-      float worldX = static_cast<float>(x) - ctx.output_origin_x;
-      float worldY = static_cast<float>(y) - ctx.output_origin_y;
-      float sliceX = worldX;
-      float sliceY = worldY;
-      RotatePoint(ctx.centerX, ctx.centerY, sliceX, sliceY, ctx.angleCos,
-                  -ctx.angleSin);
-      
+    PF_Pixel *dst_row =
+        reinterpret_cast<PF_Pixel *>(dstBase + y * dst_rowbytes);
+    const float worldY = static_cast<float>(y) - origin_y;
+
+    for (int x = 0; x < dst_width; ++x) {
+      const float worldX = static_cast<float>(x) - origin_x;
+
+      // Inline rotation
+      float dx = worldX - centerX;
+      float dy = worldY - centerY;
+      float sliceX = dx * angleCos - dy * negAngleSin + centerX;
+
       const A_long idx = FindSliceIndex(&ctx, sliceX);
       if (idx < 0) {
-        out->alpha = out->red = out->green = out->blue = 0;
+        dst_row[x] = {0, 0, 0, 0};
         continue;
       }
-      
+
       float accumA = 0.0f;
       PF_Pixel bestPixel = {0, 0, 0, 0};
       float maxCoverage = -1.0f;
-      
-      auto accumulateSlice = [&](A_long sliceIdx) {
-        if (sliceIdx < 0 || sliceIdx >= ctx.numSlices)
-          return;
-        
-        const SliceSegment &seg = ctx.segments[sliceIdx];
-        float coverage = 1.0f;
-        float feather = 0.5f;
-        
-        if (sliceX < seg.visibleStart - feather ||
-            sliceX > seg.visibleEnd + feather) {
-          return;
-        } else if (sliceX < seg.visibleStart + feather) {
-          coverage = (sliceX - (seg.visibleStart - feather)) / (2.0f * feather);
-        } else if (sliceX > seg.visibleEnd - feather) {
-          coverage = ((seg.visibleEnd + feather) - sliceX) / (2.0f * feather);
-        }
-        
-        if (coverage <= 0.001f)
-          return;
-        
-        float srcX = 0.0f, srcY = 0.0f;
-        ComputeShiftedSourceCoords(&ctx, seg, worldX, worldY, srcX, srcY);
-        PF_Pixel p = SampleSourcePixel8(srcX, srcY, &ctx);
-        
-        accumA += static_cast<float>(p.alpha) * coverage;
-        
-        bool currentIsOpaque = (p.alpha > 0);
-        bool bestIsOpaque = (bestPixel.alpha > 0);
-        
-        if (currentIsOpaque && !bestIsOpaque) {
-          maxCoverage = coverage;
-          bestPixel = p;
-        } else if (currentIsOpaque == bestIsOpaque) {
-          if (coverage > maxCoverage) {
-            maxCoverage = coverage;
-            bestPixel = p;
-          }
-        }
-      };
-      
-      accumulateSlice(idx);
-      accumulateSlice(idx - 1);
-      accumulateSlice(idx + 1);
-      
-      out->alpha = static_cast<A_u_char>(CLAMP(accumA + 0.5f, 0.0f, 255.0f));
-      out->red = bestPixel.red;
-      out->green = bestPixel.green;
-      out->blue = bestPixel.blue;
+
+      AccumulateSlice8(&ctx, idx, sliceX, worldX, worldY, accumA, bestPixel,
+                       maxCoverage);
+      AccumulateSlice8(&ctx, idx - 1, sliceX, worldX, worldY, accumA, bestPixel,
+                       maxCoverage);
+      AccumulateSlice8(&ctx, idx + 1, sliceX, worldX, worldY, accumA, bestPixel,
+                       maxCoverage);
+
+      dst_row[x].alpha =
+          static_cast<A_u_char>(accumA > 254.5f ? 255 : (accumA < 0.5f ? 0 : static_cast<A_u_char>(accumA + 0.5f)));
+      dst_row[x].red = bestPixel.red;
+      dst_row[x].green = bestPixel.green;
+      dst_row[x].blue = bestPixel.blue;
     }
   }
 }
 
-// Multi-threaded row processing function (16-bit)
+// Inline slice accumulation for 16-bit (no lambda overhead)
+static inline void AccumulateSlice16(
+    const SliceContext *ctx, A_long sliceIdx, float sliceX,
+    float worldX, float worldY, float &accumA,
+    PF_Pixel16 &bestPixel, float &maxCoverage) {
+  if (sliceIdx < 0 || sliceIdx >= ctx->numSlices)
+    return;
+
+  const SliceSegment &seg = ctx->segments[sliceIdx];
+  constexpr float feather = 0.5f;
+  constexpr float inv_feather2 = 1.0f / (2.0f * feather);
+
+  if (sliceX < seg.visibleStart - feather || sliceX > seg.visibleEnd + feather)
+    return;
+
+  float coverage = 1.0f;
+  if (sliceX < seg.visibleStart + feather) {
+    coverage = (sliceX - seg.visibleStart + feather) * inv_feather2;
+  } else if (sliceX > seg.visibleEnd - feather) {
+    coverage = (seg.visibleEnd + feather - sliceX) * inv_feather2;
+  }
+
+  if (coverage <= 0.001f)
+    return;
+
+  // Inline shifted source coordinate calculation
+  float offsetPixels =
+      ctx->shiftAmount * seg.shiftRandomFactor * seg.shiftDirection;
+  float srcX = worldX + ctx->shiftDirX * offsetPixels;
+  float srcY = worldY + ctx->shiftDirY * offsetPixels;
+
+  // Inline sample
+  A_long sx = static_cast<A_long>(srcX + 0.5f);
+  A_long sy = static_cast<A_long>(srcY + 0.5f);
+
+  PF_Pixel16 p = {0, 0, 0, 0};
+  if (sx >= 0 && sx < ctx->width && sy >= 0 && sy < ctx->height) {
+    p = *reinterpret_cast<PF_Pixel16 *>(
+        reinterpret_cast<char *>(ctx->srcData) + sy * ctx->rowbytes +
+        sx * static_cast<A_long>(sizeof(PF_Pixel16)));
+  }
+
+  accumA += static_cast<float>(p.alpha) * coverage;
+
+  bool currentIsOpaque = (p.alpha > 0);
+  bool bestIsOpaque = (bestPixel.alpha > 0);
+
+  if (currentIsOpaque && !bestIsOpaque) {
+    maxCoverage = coverage;
+    bestPixel = p;
+  } else if (currentIsOpaque == bestIsOpaque && coverage > maxCoverage) {
+    maxCoverage = coverage;
+    bestPixel = p;
+  }
+}
+
+// Multi-threaded row processing function (16-bit) - optimized
 static void ProcessRows16(const SliceContext &ctx, int start_y, int end_y) {
   const float maxC = static_cast<float>(PF_MAX_CHAN16);
-  
+
+  // Pre-compute loop invariants
+  const float origin_x = ctx.output_origin_x;
+  const float origin_y = ctx.output_origin_y;
+  const float centerX = ctx.centerX;
+  const float centerY = ctx.centerY;
+  const float angleCos = ctx.angleCos;
+  const float negAngleSin = -ctx.angleSin;
+  const int dst_width = ctx.dst_width;
+  const A_long dst_rowbytes = ctx.dst_rowbytes;
+  char *dstBase = reinterpret_cast<char *>(ctx.dstData);
+
   for (int y = start_y; y < end_y; ++y) {
-    PF_Pixel16 *dst_row = reinterpret_cast<PF_Pixel16 *>(
-        reinterpret_cast<char *>(ctx.dstData) + y * ctx.dst_rowbytes);
-    
-    for (int x = 0; x < ctx.dst_width; ++x) {
-      PF_Pixel16 *out = &dst_row[x];
-      
-      // Convert buffer coordinates to layer coordinates
-      float worldX = static_cast<float>(x) - ctx.output_origin_x;
-      float worldY = static_cast<float>(y) - ctx.output_origin_y;
-      float sliceX = worldX;
-      float sliceY = worldY;
-      RotatePoint(ctx.centerX, ctx.centerY, sliceX, sliceY, ctx.angleCos,
-                  -ctx.angleSin);
-      
+    PF_Pixel16 *dst_row =
+        reinterpret_cast<PF_Pixel16 *>(dstBase + y * dst_rowbytes);
+    const float worldY = static_cast<float>(y) - origin_y;
+
+    for (int x = 0; x < dst_width; ++x) {
+      const float worldX = static_cast<float>(x) - origin_x;
+
+      // Inline rotation
+      float dx = worldX - centerX;
+      float dy = worldY - centerY;
+      float sliceX = dx * angleCos - dy * negAngleSin + centerX;
+
       const A_long idx = FindSliceIndex(&ctx, sliceX);
       if (idx < 0) {
-        out->alpha = out->red = out->green = out->blue = 0;
+        dst_row[x] = {0, 0, 0, 0};
         continue;
       }
-      
+
       float accumA = 0.0f;
       PF_Pixel16 bestPixel = {0, 0, 0, 0};
       float maxCoverage = -1.0f;
-      
-      auto accumulateSlice = [&](A_long sliceIdx) {
-        if (sliceIdx < 0 || sliceIdx >= ctx.numSlices)
-          return;
-        
-        const SliceSegment &seg = ctx.segments[sliceIdx];
-        float coverage = 1.0f;
-        float feather = 0.5f;
-        
-        if (sliceX < seg.visibleStart - feather ||
-            sliceX > seg.visibleEnd + feather) {
-          return;
-        } else if (sliceX < seg.visibleStart + feather) {
-          coverage = (sliceX - (seg.visibleStart - feather)) / (2.0f * feather);
-        } else if (sliceX > seg.visibleEnd - feather) {
-          coverage = ((seg.visibleEnd + feather) - sliceX) / (2.0f * feather);
-        }
-        
-        if (coverage <= 0.001f)
-          return;
-        
-        float srcX = 0.0f, srcY = 0.0f;
-        ComputeShiftedSourceCoords(&ctx, seg, worldX, worldY, srcX, srcY);
-        PF_Pixel16 p = SampleSourcePixel16(srcX, srcY, &ctx);
-        
-        accumA += static_cast<float>(p.alpha) * coverage;
-        
-        bool currentIsOpaque = (p.alpha > 0);
-        bool bestIsOpaque = (bestPixel.alpha > 0);
-        
-        if (currentIsOpaque && !bestIsOpaque) {
-          maxCoverage = coverage;
-          bestPixel = p;
-        } else if (currentIsOpaque == bestIsOpaque) {
-          if (coverage > maxCoverage) {
-            maxCoverage = coverage;
-            bestPixel = p;
-          }
-        }
-      };
-      
-      accumulateSlice(idx);
-      accumulateSlice(idx - 1);
-      accumulateSlice(idx + 1);
-      
-      out->alpha = static_cast<A_u_short>(CLAMP(accumA + 0.5f, 0.0f, maxC));
-      out->red = bestPixel.red;
-      out->green = bestPixel.green;
-      out->blue = bestPixel.blue;
+
+      AccumulateSlice16(&ctx, idx, sliceX, worldX, worldY, accumA, bestPixel,
+                        maxCoverage);
+      AccumulateSlice16(&ctx, idx - 1, sliceX, worldX, worldY, accumA, bestPixel,
+                        maxCoverage);
+      AccumulateSlice16(&ctx, idx + 1, sliceX, worldX, worldY, accumA, bestPixel,
+                        maxCoverage);
+
+      dst_row[x].alpha =
+          static_cast<A_u_short>(accumA > maxC - 0.5f ? static_cast<A_u_short>(maxC) : 
+                                 (accumA < 0.5f ? 0 : static_cast<A_u_short>(accumA + 0.5f)));
+      dst_row[x].red = bestPixel.red;
+      dst_row[x].green = bestPixel.green;
+      dst_row[x].blue = bestPixel.blue;
     }
   }
 }
