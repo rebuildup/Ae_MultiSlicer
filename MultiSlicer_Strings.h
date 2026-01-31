@@ -21,6 +21,9 @@
 
 #pragma once
 
+// Safe string buffer size constant - must match MultiSlicer_Strings.cpp
+#define STRING_BUFFER_SIZE 256
+
 typedef enum {
     StrID_NONE,
     StrID_Name,

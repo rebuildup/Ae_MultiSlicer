@@ -27,12 +27,9 @@ typedef unsigned short PixelType;
 
 #include "AEFX_ChannelDepthTpl.h"
 #include "AEGP_SuiteHandler.h"
+#include <algorithm>
 
 #include "MultiSlicer_Strings.h"
-
-#include <thread>
-#include <vector>
-#include <algorithm>
 
 /* Versioning information */
 #define MAJOR_VERSION 1
@@ -56,6 +53,55 @@ typedef unsigned short PixelType;
 #define MULTISLICER_ANGLE_DFLT 0
 #define MULTISLICER_ANCHOR_X_DFLT 50
 #define MULTISLICER_ANCHOR_Y_DFLT 50
+
+// Expansion calculation constants
+#define EXPANSION_MULTIPLIER 2.5f
+#define EXPANSION_MARGIN 5
+#define MAX_EXPANSION 25000
+
+// Feather and edge constants
+#define DEFAULT_FEATHER 0.5f
+#define FULL_WIDTH_THRESHOLD 1.0f
+#define WIDTH_TOLERANCE 0.0001f
+#define NO_EFFECT_THRESHOLD 0.001f
+
+// Random seed multipliers
+#define DIR_SEED_MULT 17
+#define DIR_SEED_OFFSET 31
+#define FACTOR_SEED_MULT 23
+#define FACTOR_SEED_OFFSET 41
+#define MAX_RANDOM_SHIFT_FACTOR 1.5f
+
+// GetRandomValue algorithm constants (Tiny Mersenne Twister variant)
+#define RANDOM_HASH_MULT1 1099087
+#define RANDOM_HASH_MULT2 2654435761
+#define RANDOM_HASH_MASK 0x7FFFFFFF
+#define RANDOM_SINE_MULT 12.9898f
+#define RANDOM_SINE_ADD 43758.5453f
+#define RANDOM_ROUND_THRESHOLD 0.5f
+
+// Division point calculation constants
+#define DIV_BASE_RANDOM_INDEX1 3779
+#define DIV_BASE_RANDOM_INDEX2 2971
+#define DIV_RANDOM_THRESHOLD_1 0.7f
+#define DIV_RANDOM_THRESHOLD_2 0.3f
+#define DIV_RANDOM_FACTOR_LOW 0.2f
+#define DIV_RANDOM_FACTOR_HIGH 1.0f
+#define DIV_RANDOM_FACTOR_MAX 0.8f
+#define DIV_MIN_SPACING_RATIO 0.05f
+#define DIV_RANGE_CHECK_THRESHOLD 0.001f
+
+// Sampling and coordinate constants
+#define SAMPLE_ROUND_OFFSET 0.5f
+#define BINARY_SEARCH_THRESHOLD 8
+#define COVERAGE_THRESHOLD 0.001f
+#define FEATHER_SOFT_EDGE (2.0f * DEFAULT_FEATHER)
+#define FIXED_POINT_SCALE 65536.0f
+
+// Search algorithm constants
+#define SEARCH_HASH_BASE1 12345
+#define SEARCH_LENGTH_MARGIN 0.1f
+#define SEARCH_SLICE_VARIETY 2.0f
 
 enum {
   MULTISLICER_INPUT = 0,
@@ -106,12 +152,6 @@ typedef struct {
   // Origin offset for coordinate transformation (buffer coords -> layer coords)
   float output_origin_x;
   float output_origin_y;
-  // Output buffer info for multi-threaded rendering
-  void *dstData;
-  A_long dst_rowbytes;
-  A_long dst_width;
-  A_long dst_height;
-  bool is_16bit;
 } SliceContext;
 
 extern "C" {

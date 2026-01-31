@@ -21,9 +21,12 @@
 
 #include "MultiSlicer.h"
 
+// Define safe string buffer size constant
+#define STRING_BUFFER_SIZE 256
+
 typedef struct {
     A_u_long    index;
-    A_char      str[256];
+    A_char      str[STRING_BUFFER_SIZE];
 } TableString;
 
 TableString     g_strs[StrID_NUMTYPES] = {
@@ -38,7 +41,26 @@ TableString     g_strs[StrID_NUMTYPES] = {
 };
 
 
-char* GetStringPtr(int strNum)
+// Safely get stdlib string pointer with bounds checking
+char* GetStdStringPtr(int strNum)
 {
+    if (strNum < 0 || strNum >= StrID_NUMTYPES) {
+        return g_strs[StrID_NONE].str;
+    }
     return g_strs[strNum].str;
+}
+
+// Get string length safely (for external use)
+A_long GetStringSafeLength(int strNum)
+{
+    if (strNum < 0 || strNum >= StrID_NUMTYPES) {
+        return 0;
+    }
+    // Use safe string length check
+    const A_char* str = g_strs[strNum].str;
+    A_long len = 0;
+    while (len < STRING_BUFFER_SIZE && str[len] != '\0') {
+        len++;
+    }
+    return len;
 }
