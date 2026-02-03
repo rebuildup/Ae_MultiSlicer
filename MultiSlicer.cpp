@@ -672,6 +672,22 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
   }
 #endif
 
+  // CRITICAL FIX: Declare all variables before any goto statements to fix C2362 errors
+  // Variables are declared but not initialized until needed
+  A_long imageWidth;
+  A_long imageHeight;
+  float centerX;
+  float centerY;
+  float angleRad;
+  float angleCos;
+  float angleSin;
+  float sliceLength;
+  PF_Handle segmentsHandle;
+  PF_Handle divPointsHandle;
+  SliceSegment *segments;
+  float *divPoints;
+  SliceContext context;
+
   // Extract parameters
   float shiftRaw = params[MULTISLICER_SHIFT]->u.fs_d.value;
   float width = params[MULTISLICER_WIDTH]->u.fs_d.value / 100.0f;
@@ -708,36 +724,37 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
     goto render_cleanup;
   }
 
-  A_long imageWidth = inputP->width;
-  A_long imageHeight = inputP->height;
+  // Initialize variables declared earlier
+  imageWidth = inputP->width;
+  imageHeight = inputP->height;
 
   // Calculate anchor point in pixel coordinates
-  float centerX = static_cast<float>(anchor_x) / FIXED_POINT_SCALE;
-  float centerY = static_cast<float>(anchor_y) / FIXED_POINT_SCALE;
+  centerX = static_cast<float>(anchor_x) / FIXED_POINT_SCALE;
+  centerY = static_cast<float>(anchor_y) / FIXED_POINT_SCALE;
   centerX = MAX(0.0f, MIN(centerX, static_cast<float>(imageWidth - 1)));
   centerY = MAX(0.0f, MIN(centerY, static_cast<float>(imageHeight - 1)));
 
   // Calculate rotation parameters
-  float angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
-  float angleCos = cosf(angleRad);
-  float angleSin = sinf(angleRad);
+  angleRad = (float)angle_long * PF_RAD_PER_DEGREE;
+  angleCos = cosf(angleRad);
+  angleSin = sinf(angleRad);
 
   // Use LAYER size for sliceLength (controls slice spacing/appearance)
   // Not expanded buffer size - that would stretch the slices
-  float sliceLength =
+  sliceLength =
       2.0f * sqrtf(static_cast<float>(imageWidth * imageWidth +
                                       imageHeight * imageHeight));
 
   // Allocate memory for slice segments and division points
-  PF_Handle segmentsHandle = nullptr;
-  PF_Handle divPointsHandle = nullptr;
+  segmentsHandle = nullptr;
+  divPointsHandle = nullptr;
 
   segmentsHandle = suites.HandleSuite1()->host_new_handle(numSlices * sizeof(SliceSegment));
   if (!segmentsHandle) {
     err = PF_Err_OUT_OF_MEMORY;
     goto render_cleanup;
   }
-  SliceSegment *segments = *((SliceSegment **)segmentsHandle);
+  segments = *((SliceSegment **)segmentsHandle);
   if (!segments) {
     suites.HandleSuite1()->host_dispose_handle(segmentsHandle);
     segmentsHandle = nullptr;
@@ -750,7 +767,7 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
     err = PF_Err_OUT_OF_MEMORY;
     goto render_cleanup;
   }
-  float *divPoints = *((float **)divPointsHandle);
+  divPoints = *((float **)divPointsHandle);
   if (!divPoints) {
     suites.HandleSuite1()->host_dispose_handle(divPointsHandle);
     divPointsHandle = nullptr;
@@ -771,7 +788,7 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
   divPointsHandle = nullptr;
 
   // Build render context for iterate callbacks
-  SliceContext context = {};
+  context = {};
   context.srcData = inputP->data;
   context.rowbytes = inputP->rowbytes;
   context.width = imageWidth;
