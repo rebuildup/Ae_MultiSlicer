@@ -24,6 +24,17 @@
 // Safe string buffer size constant - must match MultiSlicer_Strings.cpp
 #define STRING_BUFFER_SIZE 256
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// String resource access function (required by String_Utils.h STR() macro)
+A_char* GetStringPtr(int strNum);
+
+#ifdef __cplusplus
+}
+#endif
+
 typedef enum {
     StrID_NONE,
     StrID_Name,

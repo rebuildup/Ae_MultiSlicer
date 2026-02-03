@@ -29,6 +29,19 @@ typedef struct {
     A_char      str[STRING_BUFFER_SIZE];
 } TableString;
 
+// Forward declaration of g_strs for GetStringPtr
+extern TableString g_strs[StrID_NUMTYPES];
+
+// GetStringPtr must be exported as C for compatibility with String_Utils.h macro
+extern "C" A_char* GetStringPtr(int strNum)
+{
+    if (strNum < 0 || strNum >= StrID_NUMTYPES) {
+        return g_strs[StrID_NONE].str;
+    }
+    return g_strs[strNum].str;
+}
+
+// Definition of g_strs (must come after GetStringPtr that references it)
 TableString     g_strs[StrID_NUMTYPES] = {
     StrID_NONE,                         "",
     StrID_Name,                         "MultiSlicer",
