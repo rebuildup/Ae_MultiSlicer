@@ -55,7 +55,8 @@ TableString     g_strs[StrID_NUMTYPES] = {
 
 
 // Safely get stdlib string pointer with bounds checking
-char* GetStdStringPtr(int strNum)
+// Must be extern "C" for Mac .exp file export
+extern "C" char* GetStdStringPtr(int strNum)
 {
     if (strNum < 0 || strNum >= StrID_NUMTYPES) {
         return g_strs[StrID_NONE].str;

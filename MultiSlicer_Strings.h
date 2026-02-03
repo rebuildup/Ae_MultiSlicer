@@ -31,6 +31,9 @@ extern "C" {
 // String resource access function (required by String_Utils.h STR() macro)
 A_char* GetStringPtr(int strNum);
 
+// Safe stdlib string pointer function (required by Mac .exp export)
+char* GetStdStringPtr(int strNum);
+
 #ifdef __cplusplus
 }
 #endif
