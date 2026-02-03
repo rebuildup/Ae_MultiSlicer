@@ -61,12 +61,11 @@ static PF_Err About(PF_InData *in_data, PF_OutData *out_data,
                     PF_ParamDef *params[], PF_LayerDef *output) {
   AEGP_SuiteHandler suites(in_data->pica_basicP);
 
-  // CRITICAL FIX: Use snprintf instead of sprintf to prevent buffer overflow
-  suites.ANSICallbacksSuite1()->snprintf(out_data->return_msg,
-                                          sizeof(out_data->return_msg),
-                                          "%s v%d.%d\r%s",
-                                          STR(StrID_Name), MAJOR_VERSION,
-                                          MINOR_VERSION, STR(StrID_Description));
+  // FIX for SDK 25.6: Use sprintf instead of snprintf (snprintf not available in ANSICallbacksSuite1)
+  suites.ANSICallbacksSuite1()->sprintf(out_data->return_msg,
+                                         "%s v%d.%d\r%s",
+                                         STR(StrID_Name), MAJOR_VERSION,
+                                         MINOR_VERSION, STR(StrID_Description));
   return PF_Err_NONE;
 }
 
@@ -665,6 +664,7 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
   }
 
   // CRITICAL FIX: Add FPU Context Set/Restore for synthetic render with NULL check
+  // Declare fpuContext here (before any goto statements) to fix C2362 error
 #if PF_WANTED_SYNTHETIC_RENDER
   PF_FPUContextData fpuContext;
   if (suites.FPUSuite1()) {
@@ -683,7 +683,7 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
 
   // CRITICAL FIX: Validate numSlices to prevent integer overflow
   if (numSlices > 1000 || numSlices < 1) {
-    return PF_Err_BAD_PARAM;
+    return PF_Err_UNRECOGNIZED_PARAM_TYPE;
   }
   numSlices = MAX(1, numSlices);
 
@@ -793,31 +793,28 @@ static PF_Err Render(PF_InData *in_data, PF_OutData *out_data,
 
   // CRITICAL FIX #1: Replace std::thread with SDK Iterate Pattern
   // Use AE SDK's iterate suite for proper MFR (Multi-Frame Rendering) support
+  // FIX for SDK 25.6: Iterate8Suite1/Iterate16Suite1 don't use PF_RenderPixelFilterDef
   if (PF_WORLD_IS_DEEP(inputP)) {
     // 16-bit rendering path
-    PF_RenderPixelFilterDef filter_def = {
-        nullptr,                // input_world
-        outputP,                // output_world
-        nullptr,                // world_extent
-        &context,               // refcon
-        Iterate16Callback       // callback
-    };
-    err = suites.Iterate16Suite1()->iterate(in_data, 0, outputP->width,
-                                             0, outputP->height,
-                                             &filter_def, inputP, outputP);
+    err = suites.Iterate16Suite1()->iterate(in_data,
+                                             0,                    // progress_base
+                                             outputP->width,       // progress_final
+                                             inputP,               // src
+                                             nullptr,              // area (NULL for all pixels)
+                                             &context,             // refcon
+                                             Iterate16Callback,    // pix_fn
+                                             outputP);             // dst
     ERR(err);
   } else {
     // 8-bit rendering path
-    PF_RenderPixelFilterDef filter_def = {
-        nullptr,                // input_world
-        outputP,                // output_world
-        nullptr,                // world_extent
-        &context,               // refcon
-        Iterate8Callback        // callback
-    };
-    err = suites.Iterate8Suite1()->iterate(in_data, 0, outputP->width,
-                                            0, outputP->height,
-                                            &filter_def, inputP, outputP);
+    err = suites.Iterate8Suite1()->iterate(in_data,
+                                            0,                    // progress_base
+                                            outputP->width,       // progress_final
+                                            inputP,               // src
+                                            nullptr,              // area (NULL for all pixels)
+                                            &context,             // refcon
+                                            Iterate8Callback,     // pix_fn
+                                            outputP);             // dst
     ERR(err);
   }
 
@@ -890,29 +887,8 @@ extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData *in_data,
     err = Render(in_data, out_data, params, output);
     break;
 
-  // CRITICAL FIX #3: Add missing PF_Cmd handlers
-  case PF_Cmd_COMPLETE_GENERAL:
-    // Called when After Effects needs to complete any pending operations
-    err = PF_Err_NONE;
-    break;
-
-  case PF_Cmd_RESET:
-    // Called when the effect needs to reset its state
-    err = PF_Err_NONE;
-    break;
-
   case PF_Cmd_EVENT:
     // Called for UI events (e.g., parameter changes)
-    err = PF_Err_NONE;
-    break;
-
-  case PF_Cmd_ARGB_GATE_HORIZON_MASK8:
-    // Called for 8-bit ARGB gating
-    err = PF_Err_NONE;
-    break;
-
-  case PF_Cmd_ARGB_GATE_HORIZON_MASK16:
-    // Called for 16-bit ARGB gating
     err = PF_Err_NONE;
     break;
 
@@ -921,13 +897,13 @@ extern "C" DllExport PF_Err EffectMain(PF_Cmd cmd, PF_InData *in_data,
     err = PF_Err_NONE;
     break;
 
-  case PF_Cmd_SEQUENCE_SETDOWN:
-    // Called when sequence data is being torn down
+  case PF_Cmd_COMPLETELY_GENERAL:
+    // Called for completely general effect calls via AEGP (SDK 25.6 uses COMPLETELY_GENERAL, not COMPLETE_GENERAL)
     err = PF_Err_NONE;
     break;
 
   default:
-    err = PF_Err_UNRECOGNIZED_PARAM;
+    err = PF_Err_UNRECOGNIZED_PARAM_TYPE;
     break;
   }
 
