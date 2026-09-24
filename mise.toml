@@ -9,9 +9,9 @@ bun = "1.4.2"
 description = "List Agent Skills available from rebuildup/project-init"
 run = "bunx skills add rebuildup/project-init --list"
 
-[tasks.skills-install]
-description = "Restore project-local Agent Skills from skills-lock.json"
-run = "bunx skills install"
+[tasks.skills-bootstrap]
+description = "Install project-init Skills for Claude Code and universal .agents/skills consumers"
+run = "bunx skills add rebuildup/project-init --skill '*' --agent claude-code --agent codex -y"
 
 [tasks.skills-update]
 description = "Update tracked project-local Agent Skills non-interactively"
