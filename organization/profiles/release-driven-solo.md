@@ -142,6 +142,16 @@ explicit user/project decisionとして固定されたrelease scope/version/publ
 - eval/実績から特定procedureの追加価値が消えた
 
 
+## Agent Skills lifecycle
+
+- Project-local Agent Skills の導入・更新は **`bunx skills` を canonical mechanism** とする。手動 copy / 個別 agent directory の内容を upstream freshness の SoT にしない。
+- Bun は Skills CLI 用の development prerequisite とする。Bun が application runtime / package manager でない repository でも、既存の project-local `mise` または established bootstrap から利用可能にし、application の native toolchain ownership は変更しない。
+- project-init Skills は floating source `rebuildup/project-init` を追跡する。上記の `release-0-3-0` は Constitution / Operating Model の reconciliation baseline であり、Skills の freeze/pin ではない。freeze が必要なら ADR で明示する。
+- 初回導入 / scope変更は `bunx skills add rebuildup/project-init --list` で候補を確認し、必要な Skill を `bunx skills add rebuildup/project-init --skill <name> --agent '*' -y` で project scope に導入する。
+- project-local `skills-lock.json` は source / skill path / content hash の durable metadata として commit する。fresh clone は `bunx skills install`、通常の追従更新は `bunx skills update -p -y` を使う。
+- `--global` は通常運用で使用しない。user-global Skills を repository policy / freshness evidence にしない。
+- project固有 Skill や intentional customization は upstream update で無条件上書きせず、source ownershipを分けてreconcileする。
+
 ## Project-specific reconciliation
 
 - AeSDK 2025 Examples Template 配下へ clone するという現状 README の前提だけを保持し、それ以上の未確認 toolchain/build contract は固定しない。
