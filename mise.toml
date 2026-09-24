@@ -1,0 +1,18 @@
+# Project-local auxiliary tooling.
+# Bun is pinned here for Agent Skills CLI usage. Native/application toolchain
+# ownership remains with the repository's existing package/toolchain files.
+
+[tools]
+bun = "1.4.2"
+
+[tasks.skills-list]
+description = "List Agent Skills available from rebuildup/project-init"
+run = "bunx skills add rebuildup/project-init --list"
+
+[tasks.skills-install]
+description = "Restore project-local Agent Skills from skills-lock.json"
+run = "bunx skills install"
+
+[tasks.skills-update]
+description = "Update tracked project-local Agent Skills non-interactively"
+run = "bunx skills update -p -y"
