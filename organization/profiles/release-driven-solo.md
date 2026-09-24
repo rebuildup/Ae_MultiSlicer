@@ -147,8 +147,10 @@ explicit user/project decisionとして固定されたrelease scope/version/publ
 - Project-local Agent Skills の導入・更新は **`bunx skills` を canonical mechanism** とする。手動 copy / 個別 agent directory の内容を upstream freshness の SoT にしない。
 - Bun は Skills CLI 用の development prerequisite とする。Bun が application runtime / package manager でない repository でも、既存の project-local `mise` または established bootstrap から利用可能にし、application の native toolchain ownership は変更しない。
 - project-init Skills は floating source `rebuildup/project-init` を追跡する。上記の `release-0-3-0` は Constitution / Operating Model の reconciliation baseline であり、Skills の freeze/pin ではない。freeze が必要なら ADR で明示する。
-- 初回導入 / scope変更は `bunx skills add rebuildup/project-init --list` で候補を確認し、必要な Skill を `bunx skills add rebuildup/project-init --skill <name> --agent '*' -y` で project scope に導入する。
-- project-local `skills-lock.json` は source / skill path / content hash の durable metadata として commit する。fresh clone は `bunx skills install`、通常の追従更新は `bunx skills update -p -y` を使う。
+- canonical install layout は `.agents/skills/` と `.claude/skills/`。Codex / OpenCode / Cursor は universal `.agents/skills/` を共有し、Claude Code は `.claude/skills/` を使用する。
+- 初回導入 / scope変更は `bunx skills add rebuildup/project-init --list` で候補を確認し、標準bootstrapは `bunx skills add rebuildup/project-init --skill '*' --agent claude-code --agent codex -y` とする。repositoryに `mise.toml` taskがある場合は `mise run skills-bootstrap` を同じ入口とする。
+- project-local `skills-lock.json` は source / skill path / content hash の durable metadata として commit する。通常の追従更新は `bunx skills update -p -y`（または `mise run skills-update`）を使う。
+- current Skills CLI の `skills install` は lock から universal `.agents/skills/` のみを復元するため、Claude Codeを含むfresh clone bootstrapの唯一の入口にはしない。
 - `--global` は通常運用で使用しない。user-global Skills を repository policy / freshness evidence にしない。
 - project固有 Skill や intentional customization は upstream update で無条件上書きせず、source ownershipを分けてreconcileする。
 
