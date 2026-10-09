@@ -406,3 +406,7 @@ Carthage/Build/
 # Output directories
 output/
 tmp/
+# XcodeGen project and host-specific local paths
+/MultiSlicer.xcodeproj/
+/build/
+/.env.local
